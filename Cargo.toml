@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "apps/*",
+    "packages/*",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+config = { path = "packages/config" }
