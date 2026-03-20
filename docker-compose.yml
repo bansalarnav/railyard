@@ -1,0 +1,17 @@
+services:
+  server-dev:
+    build:
+      context: .
+      dockerfile: docker/server-dev.Dockerfile
+    command: ["/bin/bash", "/usr/local/bin/server-dev"]
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 3000
+      CARGO_HOME: /workspace/.server/cargo-home
+      CARGO_TARGET_DIR: /workspace/.server/target
+    init: true
+    ports:
+      - "3000:3000"
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
