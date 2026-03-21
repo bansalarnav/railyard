@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "Dashboard: http://127.0.0.1.nip.io:3000"
+echo "Example app: http://howdy.127.0.0.1.nip.io:3000"
+
 exec docker compose up --build server-dev

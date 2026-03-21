@@ -7,6 +7,7 @@ services:
     environment:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 3000
+      BASE_DOMAIN: 127.0.0.1.nip.io
       CARGO_HOME: /workspace/.server/cargo-home
       CARGO_TARGET_DIR: /workspace/.server/target
     init: true
