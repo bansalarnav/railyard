@@ -7,6 +7,7 @@ use pingora::services::ServiceReadyNotifier;
 use pingora::services::background::BackgroundService;
 use serde::Serialize;
 
+use crate::app::APP_NAME;
 use crate::state::{AppState, requested_service};
 
 pub(crate) struct AxumControlPlane {
@@ -93,7 +94,7 @@ async fn list_services(State(state): State<AppState>) -> Json<ServicesResponse> 
         .collect();
 
     Json(ServicesResponse {
-        app_name: config::AppConfig::default().app_name,
+        app_name: APP_NAME,
         base_domain: state.base_domain.clone(),
         proxy_addr: state.proxy_addr.to_string(),
         axum_addr: state.axum_addr.to_string(),

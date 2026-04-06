@@ -1,10 +1,10 @@
-use clap::{Parser, Subcommand};
+mod commands;
 
-use crate::runtime;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "aethon-server")]
-#[command(about = "Aethon control-plane and ingress server")]
+#[command(about = "Aethon server daemon control CLI. Should be running on a VPS/remote server.")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -20,7 +20,7 @@ pub fn run() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Up => runtime::up(),
-        Command::Down => runtime::down(),
+        Command::Up => commands::server::up(),
+        Command::Down => commands::server::down(),
     }
 }
