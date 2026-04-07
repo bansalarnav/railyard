@@ -1,6 +1,6 @@
+mod api;
 mod app;
 mod cli;
-mod control_plane;
 mod proxy;
 mod runtime;
 mod state;

@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::app::APP_NAME;
 use crate::state::{AppState, requested_service};
 
-pub(crate) struct AxumControlPlane {
+pub(crate) struct ApiService {
     pub(crate) state: AppState,
 }
 
@@ -25,12 +25,12 @@ struct ServicesResponse {
     app_name: &'static str,
     base_domain: String,
     proxy_addr: String,
-    axum_addr: String,
+    api_addr: String,
     services: Vec<ServiceEntry>,
 }
 
 #[async_trait]
-impl BackgroundService for AxumControlPlane {
+impl BackgroundService for ApiService {
     async fn start_with_ready_notifier(
         &self,
         mut shutdown: ShutdownWatch,
@@ -42,9 +42,9 @@ impl BackgroundService for AxumControlPlane {
             .route("/api/services", get(list_services))
             .with_state(self.state.clone());
 
-        let listener = tokio::net::TcpListener::bind(self.state.axum_addr)
+        let listener = tokio::net::TcpListener::bind(self.state.api_addr)
             .await
-            .expect("failed to bind internal axum listener");
+            .expect("failed to bind internal API listener");
 
         ready_notifier.notify_ready();
 
@@ -53,7 +53,7 @@ impl BackgroundService for AxumControlPlane {
                 let _ = shutdown.changed().await;
             })
             .await
-            .expect("axum control plane exited with error");
+            .expect("API service exited with error");
     }
 }
 
@@ -72,9 +72,9 @@ async fn root(State(state): State<AppState>, headers: HeaderMap) -> String {
     }
 
     format!(
-        "Aethon control plane is running.\nproxy={}\naxum={}\nservices={}",
+        "Aethon API is running.\nproxy={}\napi={}\nservices={}",
         state.proxy_addr,
-        state.axum_addr,
+        state.api_addr,
         state.service_upstreams.len()
     )
 }
@@ -97,7 +97,7 @@ async fn list_services(State(state): State<AppState>) -> Json<ServicesResponse> 
         app_name: APP_NAME,
         base_domain: state.base_domain.clone(),
         proxy_addr: state.proxy_addr.to_string(),
-        axum_addr: state.axum_addr.to_string(),
+        api_addr: state.api_addr.to_string(),
         services,
     })
 }

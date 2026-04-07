@@ -2,25 +2,21 @@ use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::{fs, path::Path, thread, time::Duration};
 
-use super::layout::{
-    ensure_runtime_layout, runtime_conf_path, runtime_pid_path, write_pingora_conf,
-};
 use super::server::run_server;
 
-pub(crate) fn up() {
-    ensure_runtime_layout().expect("failed to create runtime directory");
+const PID_FILE_PATH: &str = "/tmp/pingora.pid";
 
+pub(crate) fn up() {
     if let Some(pid) = read_running_pid() {
         println!("Aethon server is already running with pid {pid}");
         return;
     }
 
-    write_pingora_conf(runtime_conf_path()).expect("failed to write pingora config");
     run_server(true);
 }
 
 pub(crate) fn down() {
-    let pid_path = runtime_pid_path();
+    let pid_path = pid_file_path();
     let Some(pid) = read_pid_file(&pid_path) else {
         println!("Aethon server is not running");
         return;
@@ -47,13 +43,17 @@ pub(crate) fn down() {
 }
 
 fn read_running_pid() -> Option<i32> {
-    let pid = read_pid_file(&runtime_pid_path())?;
+    let pid = read_pid_file(&pid_file_path())?;
     if process_exists(pid) {
         Some(pid)
     } else {
-        let _ = fs::remove_file(runtime_pid_path());
+        let _ = fs::remove_file(pid_file_path());
         None
     }
+}
+
+fn pid_file_path() -> &'static Path {
+    Path::new(PID_FILE_PATH)
 }
 
 fn read_pid_file(path: &Path) -> Option<i32> {

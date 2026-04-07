@@ -20,7 +20,7 @@ pub fn run() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Up => commands::server::up(),
-        Command::Down => commands::server::down(),
+        Command::Up => commands::up::run(),
+        Command::Down => commands::down::run(),
     }
 }

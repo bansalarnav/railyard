@@ -11,7 +11,7 @@ use crate::state::{AppState, service_upstream_for_host};
 #[derive(Clone)]
 pub(crate) struct RoutingTable {
     pub(crate) base_domain: String,
-    pub(crate) axum_addr: SocketAddr,
+    pub(crate) api_addr: SocketAddr,
     pub(crate) service_upstreams: Arc<BTreeMap<String, SocketAddr>>,
 }
 
@@ -29,7 +29,7 @@ impl RoutingTable {
     pub(crate) fn from_state(state: &AppState) -> Self {
         Self {
             base_domain: state.base_domain.clone(),
-            axum_addr: state.axum_addr,
+            api_addr: state.api_addr,
             service_upstreams: state.service_upstreams.clone(),
         }
     }
@@ -51,8 +51,8 @@ impl RoutingTable {
         }
 
         RouteTarget {
-            upstream_addr: self.axum_addr,
-            upstream_name: "control-plane".to_string(),
+            upstream_addr: self.api_addr,
+            upstream_name: "api".to_string(),
         }
     }
 }
@@ -63,8 +63,8 @@ impl ProxyHttp for ControlPlaneProxy {
 
     fn new_ctx(&self) -> Self::CTX {
         RouteTarget {
-            upstream_addr: self.routes.axum_addr,
-            upstream_name: "control-plane".to_string(),
+            upstream_addr: self.routes.api_addr,
+            upstream_name: "api".to_string(),
         }
     }
 

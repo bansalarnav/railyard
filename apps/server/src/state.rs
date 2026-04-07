@@ -10,7 +10,7 @@ use std::{
 pub(crate) struct AppState {
     pub(crate) base_domain: String,
     pub(crate) proxy_addr: SocketAddr,
-    pub(crate) axum_addr: SocketAddr,
+    pub(crate) api_addr: SocketAddr,
     pub(crate) service_upstreams: Arc<BTreeMap<String, SocketAddr>>,
 }
 
@@ -19,7 +19,7 @@ impl AppState {
         Self {
             base_domain: base_domain(),
             proxy_addr: SocketAddr::from((proxy_host(), proxy_port())),
-            axum_addr: SocketAddr::from((axum_host(), axum_port())),
+            api_addr: SocketAddr::from((api_host(), api_port())),
             service_upstreams: Arc::new(configured_service_upstreams()),
         }
     }
@@ -89,19 +89,19 @@ fn proxy_port() -> u16 {
     }
 }
 
-fn axum_host() -> IpAddr {
-    match env::var("AXUM_HOST") {
+fn api_host() -> IpAddr {
+    match env::var("API_HOST") {
         Ok(value) => value.parse().unwrap_or_else(|_| {
-            panic!("AXUM_HOST must be a valid IP address, got {value:?}");
+            panic!("API_HOST must be a valid IP address, got {value:?}");
         }),
         Err(_) => IpAddr::from([127, 0, 0, 1]),
     }
 }
 
-fn axum_port() -> u16 {
-    match env::var("AXUM_PORT") {
+fn api_port() -> u16 {
+    match env::var("API_PORT") {
         Ok(value) => value.parse().unwrap_or_else(|_| {
-            panic!("AXUM_PORT must be a valid port number, got {value:?}");
+            panic!("API_PORT must be a valid port number, got {value:?}");
         }),
         Err(_) => 3000,
     }
