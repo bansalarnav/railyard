@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use axum::middleware;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::{Json, Router, routing::get};
@@ -8,6 +9,7 @@ use pingora::services::background::BackgroundService;
 use serde::Serialize;
 
 use crate::app::APP_NAME;
+use crate::auth::require_signed_request;
 use crate::state::{AppState, requested_service};
 
 pub(crate) struct ApiService {
@@ -36,10 +38,19 @@ impl BackgroundService for ApiService {
         mut shutdown: ShutdownWatch,
         ready_notifier: ServiceReadyNotifier,
     ) {
+        let protected_api = Router::new()
+            .route("/api/services", get(list_services))
+            .route("/admin/api/services", get(list_services))
+            .route_layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                require_signed_request,
+            ));
+
         let app = Router::new()
             .route("/", get(root))
+            .route("/admin", get(root))
             .route("/healthz", get(healthz))
-            .route("/api/services", get(list_services))
+            .merge(protected_api)
             .with_state(self.state.clone());
 
         let listener = tokio::net::TcpListener::bind(self.state.api_addr)

@@ -6,12 +6,16 @@ use std::{
     sync::Arc,
 };
 
+use crate::auth::{AuthStore, NonceCache};
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) base_domain: String,
     pub(crate) proxy_addr: SocketAddr,
     pub(crate) api_addr: SocketAddr,
     pub(crate) service_upstreams: Arc<BTreeMap<String, SocketAddr>>,
+    pub(crate) auth_store: AuthStore,
+    pub(crate) auth_nonce_cache: NonceCache,
 }
 
 impl AppState {
@@ -21,6 +25,8 @@ impl AppState {
             proxy_addr: SocketAddr::from((proxy_host(), proxy_port())),
             api_addr: SocketAddr::from((api_host(), api_port())),
             service_upstreams: Arc::new(configured_service_upstreams()),
+            auth_store: AuthStore::load(),
+            auth_nonce_cache: NonceCache::default(),
         }
     }
 }
