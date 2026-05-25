@@ -3,8 +3,8 @@ mod commands;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "aethon-server")]
-#[command(about = "Aethon server daemon control CLI. Should be running on a VPS/remote server.")]
+#[command(name = "railyard-server")]
+#[command(about = "Railyard server daemon control CLI. Should be running on a VPS/remote server.")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -40,9 +40,7 @@ enum AuthCommand {
 
 #[derive(Subcommand)]
 enum ConfigCommand {
-    SetPublicUrl {
-        public_url: String,
-    },
+    SetPublicUrl { public_url: String },
     Show,
 }
 

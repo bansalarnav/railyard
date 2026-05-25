@@ -71,7 +71,7 @@ fn canonical_request(
     content_sha256: &str,
 ) -> String {
     format!(
-        "AETHON-REQUEST-V1\nkey_id:{key_id}\ntimestamp:{timestamp}\nnonce:{nonce}\nmethod:{method}\npath:{path_and_query}\nhost:{host}\ncontent_sha256:{content_sha256}"
+        "RAILYARD-REQUEST-V1\nkey_id:{key_id}\ntimestamp:{timestamp}\nnonce:{nonce}\nmethod:{method}\npath:{path_and_query}\nhost:{host}\ncontent_sha256:{content_sha256}"
     )
 }
 

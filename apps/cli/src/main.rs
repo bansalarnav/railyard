@@ -12,8 +12,8 @@ use config::{
 };
 
 #[derive(Parser)]
-#[command(name = "aethon")]
-#[command(about = "Aethon client CLI")]
+#[command(name = "railyard")]
+#[command(about = "Railyard client CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -75,13 +75,12 @@ fn login(
 ) -> Result<(), Box<dyn Error>> {
     let device_name = device_name.unwrap_or_else(default_device_name);
     let device_name = device_name.replace(' ', "-");
-    let profile_name = profile_name
-        .unwrap_or_else(|| "default".to_string());
+    let profile_name = profile_name.unwrap_or_else(|| "default".to_string());
     let profile_name = sanitize_profile_name(&profile_name);
     let signing_key = generate_signing_key();
     let public_key = public_key_base64(&signing_key);
     let remote_command = format!(
-        "aethon-server auth register-key --name {} --public-key {}",
+        "railyard-server auth register-key --name {} --public-key {}",
         shell_escape(&device_name),
         shell_escape(&public_key)
     );

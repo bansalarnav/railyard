@@ -43,9 +43,9 @@ impl ServerConfigStore {
     }
 
     pub(crate) fn control_plane_url(&self) -> io::Result<String> {
-        let config = self
-            .read()?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "server config is not initialized"))?;
+        let config = self.read()?.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "server config is not initialized")
+        })?;
         derive_control_plane_url(&config.public_base_url)
     }
 }
@@ -56,11 +56,11 @@ fn server_config_path() -> PathBuf {
 
 fn config_root() -> PathBuf {
     if let Ok(path) = env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(path).join("aethon");
+        return PathBuf::from(path).join("railyard");
     }
 
     let home = env::var("HOME").expect("HOME must be set when XDG_CONFIG_HOME is unset");
-    Path::new(&home).join(".config").join("aethon")
+    Path::new(&home).join(".config").join("railyard")
 }
 
 fn derive_control_plane_url(public_base_url: &str) -> io::Result<String> {

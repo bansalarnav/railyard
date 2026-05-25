@@ -1,5 +1,5 @@
 [package]
-name = "cli"
+name = "railyard"
 version.workspace = true
 edition.workspace = true
 

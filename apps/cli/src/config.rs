@@ -77,7 +77,7 @@ pub(crate) fn default_device_name() -> String {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|output| output.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "aethon-device".to_string())
+        .unwrap_or_else(|| "railyard-device".to_string())
 }
 
 pub(crate) fn sanitize_profile_name(raw: &str) -> String {
@@ -111,11 +111,11 @@ fn key_path(key_id: &str) -> PathBuf {
 
 fn config_root() -> PathBuf {
     if let Ok(path) = env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(path).join("aethon");
+        return PathBuf::from(path).join("railyard");
     }
 
     let home = env::var("HOME").expect("HOME must be set when XDG_CONFIG_HOME is unset");
-    Path::new(&home).join(".config").join("aethon")
+    Path::new(&home).join(".config").join("railyard")
 }
 
 fn invalid_input(error: impl std::fmt::Display) -> io::Error {

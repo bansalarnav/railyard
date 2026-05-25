@@ -24,7 +24,13 @@ pub(crate) async fn require_signed_request(
         .await
         .map_err(|error| bad_request(format!("failed to read request body: {error}")))?;
 
-    verify_request(&state, &parts.headers, parts.method.as_str(), &parts.uri, &body)?;
+    verify_request(
+        &state,
+        &parts.headers,
+        parts.method.as_str(),
+        &parts.uri,
+        &body,
+    )?;
 
     let request = Request::from_parts(parts, Body::from(body));
     Ok(next.run(request).await)
@@ -37,18 +43,18 @@ fn verify_request(
     uri: &http::Uri,
     body: &[u8],
 ) -> Result<(), (StatusCode, String)> {
-    let version = required_header(headers, "x-aethon-signature-version")?;
+    let version = required_header(headers, "x-railyard-signature-version")?;
     if version != "v1" {
         return Err(unauthorized("unsupported signature version"));
     }
 
-    let key_id = required_header(headers, "x-aethon-key-id")?;
-    let nonce = required_header(headers, "x-aethon-nonce")?;
-    let timestamp = required_header(headers, "x-aethon-timestamp")?
+    let key_id = required_header(headers, "x-railyard-key-id")?;
+    let nonce = required_header(headers, "x-railyard-nonce")?;
+    let timestamp = required_header(headers, "x-railyard-timestamp")?
         .parse::<u64>()
-        .map_err(|_| bad_request("invalid x-aethon-timestamp"))?;
-    let body_hash = required_header(headers, "x-aethon-content-sha256")?;
-    let signature_base64 = required_header(headers, "x-aethon-signature")?;
+        .map_err(|_| bad_request("invalid x-railyard-timestamp"))?;
+    let body_hash = required_header(headers, "x-railyard-content-sha256")?;
+    let signature_base64 = required_header(headers, "x-railyard-signature")?;
     let host = required_host(headers)?;
 
     let computed_hash = hex::encode(Sha256::digest(body));
@@ -58,7 +64,9 @@ fn verify_request(
 
     let now = NonceCache::now_unix_secs();
     if now.abs_diff(timestamp) > ALLOWED_CLOCK_SKEW_SECS {
-        return Err(unauthorized("request timestamp is outside the allowed window"));
+        return Err(unauthorized(
+            "request timestamp is outside the allowed window",
+        ));
     }
 
     if !state.auth_nonce_cache.check_and_store(key_id, nonce, now) {
@@ -95,14 +103,17 @@ fn canonical_request(
     host: &str,
 ) -> String {
     format!(
-        "AETHON-REQUEST-V1\nkey_id:{key_id}\ntimestamp:{timestamp}\nnonce:{nonce}\nmethod:{method}\npath:{}\nhost:{host}\ncontent_sha256:{body_hash}",
+        "RAILYARD-REQUEST-V1\nkey_id:{key_id}\ntimestamp:{timestamp}\nnonce:{nonce}\nmethod:{method}\npath:{}\nhost:{host}\ncontent_sha256:{body_hash}",
         uri.path_and_query()
             .map(|value| value.as_str())
             .unwrap_or(uri.path())
     )
 }
 
-fn required_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Result<&'a str, (StatusCode, String)> {
+fn required_header<'a>(
+    headers: &'a HeaderMap,
+    name: &'static str,
+) -> Result<&'a str, (StatusCode, String)> {
     headers
         .get(name)
         .ok_or_else(|| bad_request(format!("missing {name}")))?

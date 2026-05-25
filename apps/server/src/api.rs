@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use axum::middleware;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use axum::middleware;
 use axum::{Json, Router, routing::get};
 use pingora::server::ShutdownWatch;
 use pingora::services::ServiceReadyNotifier;
@@ -83,7 +83,7 @@ async fn root(State(state): State<AppState>, headers: HeaderMap) -> String {
     }
 
     format!(
-        "Aethon API is running.\nproxy={}\napi={}\nservices={}",
+        "Railyard API is running.\nproxy={}\napi={}\nservices={}",
         state.proxy_addr,
         state.api_addr,
         state.service_upstreams.len()

@@ -1,5 +1,5 @@
 [package]
-name = "server"
+name = "railyard-server"
 version.workspace = true
 edition.workspace = true
 

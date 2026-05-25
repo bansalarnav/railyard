@@ -32,12 +32,12 @@ pub(crate) fn list_services(profile_name: &str) -> Result<Value, Box<dyn Error>>
     let response = Client::new()
         .get(services_url)
         .header("host", host)
-        .header("x-aethon-key-id", signed.key_id)
-        .header("x-aethon-timestamp", signed.timestamp.to_string())
-        .header("x-aethon-nonce", signed.nonce)
-        .header("x-aethon-content-sha256", signed.content_sha256)
-        .header("x-aethon-signature", signed.signature)
-        .header("x-aethon-signature-version", "v1")
+        .header("x-railyard-key-id", signed.key_id)
+        .header("x-railyard-timestamp", signed.timestamp.to_string())
+        .header("x-railyard-nonce", signed.nonce)
+        .header("x-railyard-content-sha256", signed.content_sha256)
+        .header("x-railyard-signature", signed.signature)
+        .header("x-railyard-signature-version", "v1")
         .send()?
         .error_for_status()?;
 

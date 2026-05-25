@@ -87,7 +87,7 @@ impl ProxyHttp for ControlPlaneProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
-        upstream_request.insert_header("x-aethon-upstream", ctx.upstream_name.as_str())?;
+        upstream_request.insert_header("x-railyard-upstream", ctx.upstream_name.as_str())?;
         Ok(())
     }
 }

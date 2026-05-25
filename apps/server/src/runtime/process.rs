@@ -8,7 +8,7 @@ const PID_FILE_PATH: &str = "/tmp/pingora.pid";
 
 pub(crate) fn up() {
     if let Some(pid) = read_running_pid() {
-        println!("Aethon server is already running with pid {pid}");
+        println!("Railyard server is already running with pid {pid}");
         return;
     }
 
@@ -18,7 +18,7 @@ pub(crate) fn up() {
 pub(crate) fn down() {
     let pid_path = pid_file_path();
     let Some(pid) = read_pid_file(&pid_path) else {
-        println!("Aethon server is not running");
+        println!("Railyard server is not running");
         return;
     };
 
@@ -33,7 +33,7 @@ pub(crate) fn down() {
     for _ in 0..50 {
         if !process_exists(pid) {
             let _ = fs::remove_file(&pid_path);
-            println!("Stopped Aethon server (pid {pid})");
+            println!("Stopped Railyard server (pid {pid})");
             return;
         }
         thread::sleep(Duration::from_millis(100));

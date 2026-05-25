@@ -1,1 +1,1 @@
-pub(crate) const APP_NAME: &str = "aethon";
+pub(crate) const APP_NAME: &str = "railyard";
