@@ -68,7 +68,7 @@ fn derive_control_plane_url(public_base_url: &str) -> io::Result<String> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
 
     match url.host_str() {
-        Some(host) if host.parse::<std::net::IpAddr>().is_ok() => {
+        Some(_) => {
             let base_path = url.path().trim_end_matches('/');
             let next_path = if base_path.is_empty() || base_path == "/" {
                 "/admin".to_string()
@@ -76,16 +76,6 @@ fn derive_control_plane_url(public_base_url: &str) -> io::Result<String> {
                 format!("{base_path}/admin")
             };
             url.set_path(&next_path);
-        }
-        Some(host) => {
-            let admin_host = if host.starts_with("admin.") {
-                host.to_string()
-            } else {
-                format!("admin.{host}")
-            };
-            url.set_host(Some(&admin_host))
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid admin host"))?;
-            url.set_path("");
         }
         None => {
             return Err(io::Error::new(

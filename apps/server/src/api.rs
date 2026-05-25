@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::middleware;
 use axum::{Json, Router, routing::get};
 use pingora::server::ShutdownWatch;
@@ -10,7 +9,7 @@ use serde::Serialize;
 
 use crate::app::APP_NAME;
 use crate::auth::require_signed_request;
-use crate::state::{AppState, requested_service};
+use crate::state::AppState;
 
 pub(crate) struct ApiService {
     pub(crate) state: AppState,
@@ -25,7 +24,6 @@ struct ServiceEntry {
 #[derive(Serialize)]
 struct ServicesResponse {
     app_name: &'static str,
-    base_domain: String,
     proxy_addr: String,
     api_addr: String,
     services: Vec<ServiceEntry>,
@@ -68,20 +66,7 @@ impl BackgroundService for ApiService {
     }
 }
 
-async fn root(State(state): State<AppState>, headers: HeaderMap) -> String {
-    if let Some(service) = requested_service(&headers, &state.base_domain) {
-        if let Some(addr) = state.service_upstreams.get(&service) {
-            return format!(
-                "Service {service} is configured for proxying to {addr}. Requests to this host should be served by the proxied container."
-            );
-        }
-
-        return format!(
-            "Service {service} is not configured yet. Add CONTAINER_UPSTREAM_{} to route it through Pingora.",
-            service.to_ascii_uppercase().replace('-', "_")
-        );
-    }
-
+async fn root(State(state): State<AppState>) -> String {
     format!(
         "Railyard API is running.\nproxy={}\napi={}\nservices={}",
         state.proxy_addr,
@@ -106,7 +91,6 @@ async fn list_services(State(state): State<AppState>) -> Json<ServicesResponse> 
 
     Json(ServicesResponse {
         app_name: APP_NAME,
-        base_domain: state.base_domain.clone(),
         proxy_addr: state.proxy_addr.to_string(),
         api_addr: state.api_addr.to_string(),
         services,

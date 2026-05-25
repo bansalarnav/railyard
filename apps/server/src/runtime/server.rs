@@ -6,13 +6,12 @@ use pingora::services::background::background_service;
 use crate::api::ApiService;
 use crate::app::APP_NAME;
 use crate::proxy::{ControlPlaneProxy, RoutingTable};
-use crate::state::{AppState, display_url};
+use crate::state::AppState;
 
 pub(super) fn run_server(daemon: bool) {
     let state = AppState::load();
     let proxy_addr = state.proxy_addr;
     let api_addr = state.api_addr;
-    let base_domain = state.base_domain.clone();
     let routes = RoutingTable::from_state(&state);
 
     let opt = pingora_opt(daemon);
@@ -37,16 +36,7 @@ pub(super) fn run_server(daemon: bool) {
         APP_NAME, proxy_addr
     );
     println!("Internal API bound to http://{}", api_addr);
-    println!(
-        "Dashboard URL: {}",
-        display_url(base_domain.as_str(), proxy_addr.port())
-    );
-    println!(
-        "Example deployment URL: http://howdy.{}:{}",
-        base_domain,
-        proxy_addr.port()
-    );
-    println!("Register container routes with env like CONTAINER_UPSTREAM_HOWDY=127.0.0.1:4001");
+    println!("Dashboard URL: http://{}", proxy_addr);
 
     server.run_forever();
 }

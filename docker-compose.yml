@@ -5,9 +5,10 @@ services:
       dockerfile: docker/server-dev.Dockerfile
     command: ["/bin/bash", "/usr/local/bin/server-dev"]
     environment:
-      SERVER_HOST: 0.0.0.0
-      SERVER_PORT: 3000
-      BASE_DOMAIN: 127.0.0.1.nip.io
+      PROXY_HOST: 0.0.0.0
+      PROXY_PORT: 3000
+      API_HOST: 127.0.0.1
+      API_PORT: 3001
       CARGO_HOME: /workspace/.server/cargo-home
       CARGO_TARGET_DIR: /workspace/.server/target
     init: true
