@@ -7,9 +7,9 @@ use pingora::services::ServiceReadyNotifier;
 use pingora::services::background::BackgroundService;
 use serde::Serialize;
 
+use super::state::AppState;
 use crate::app::APP_NAME;
 use crate::auth::require_signed_request;
-use crate::state::AppState;
 
 pub(crate) struct ApiService {
     pub(crate) state: AppState,

@@ -4,10 +4,11 @@ use pingora::server::configuration::{Opt, ServerConf};
 use pingora::services::background::background_service;
 use std::path::Path;
 
-use crate::api::ApiService;
 use crate::app::APP_NAME;
-use crate::proxy::{ControlPlaneProxy, RoutingTable};
-use crate::state::AppState;
+
+use super::api::ApiService;
+use super::proxy::{ControlPlaneProxy, RoutingTable};
+use super::state::AppState;
 
 pub(super) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) {
     let state = AppState::load();

@@ -5,7 +5,7 @@ use pingora::proxy::{ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 use std::net::SocketAddr;
 
-use crate::state::AppState;
+use super::state::AppState;
 
 #[derive(Clone)]
 pub(crate) struct RoutingTable {

@@ -1,5 +1,5 @@
-use crate::runtime;
+use crate::daemon;
 
 pub(crate) fn run() {
-    runtime::up();
+    daemon::up();
 }

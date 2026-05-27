@@ -1,11 +1,8 @@
-mod api;
 mod app;
 mod auth;
 mod cli;
 mod config;
-mod proxy;
-mod runtime;
-mod state;
+mod daemon;
 
 fn main() {
     env_logger::init();
