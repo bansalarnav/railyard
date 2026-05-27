@@ -1,5 +1,27 @@
 # Railyard
 
+## Server Daemon
+
+Run the server in the background:
+
+```bash
+railyard-server up
+```
+
+Check or control the background server:
+
+```bash
+railyard-server status
+railyard-server restart
+railyard-server down
+```
+
+For development or external process supervision, run the server in the foreground:
+
+```bash
+railyard-server serve
+```
+
 ## Docker Dev Server
 
 Run the server inside the Ubuntu dev container with hot reload:

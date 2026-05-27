@@ -14,6 +14,9 @@ struct Cli {
 enum Command {
     Up,
     Down,
+    Restart,
+    Serve,
+    Status,
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
@@ -50,6 +53,9 @@ pub fn run() {
     match cli.command {
         Command::Up => commands::up::run(),
         Command::Down => commands::down::run(),
+        Command::Restart => commands::restart::run(),
+        Command::Serve => commands::serve::run(),
+        Command::Status => commands::status::run(),
         Command::Auth { command } => match command {
             AuthCommand::RegisterKey { name, public_key } => {
                 commands::auth::register_key::run(name, public_key)
