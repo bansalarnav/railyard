@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use super::server::run_server;
+use crate::http::run_server;
 
 pub(crate) fn up() {
     if let Some(pid) = read_running_pid() {

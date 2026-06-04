@@ -10,7 +10,7 @@ use super::api::ApiService;
 use super::proxy::{ControlPlaneProxy, RoutingTable};
 use super::state::AppState;
 
-pub(super) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) {
+pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) {
     let state = AppState::load();
     let proxy_addr = state.proxy_addr;
     let api_addr = state.api_addr;

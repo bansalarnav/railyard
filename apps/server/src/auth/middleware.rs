@@ -9,7 +9,7 @@ use ed25519_dalek::{Signature, Verifier};
 use sha2::{Digest, Sha256};
 
 use crate::auth::NonceCache;
-use crate::daemon::AppState;
+use crate::http::AppState;
 
 const MAX_SIGNED_BODY_SIZE: usize = 1024 * 1024;
 const ALLOWED_CLOCK_SKEW_SECS: u64 = 300;
