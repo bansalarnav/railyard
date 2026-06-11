@@ -1,6 +1,7 @@
 mod commands;
 
 use clap::{Parser, Subcommand};
+use std::error::Error;
 
 #[derive(Parser)]
 #[command(name = "railyard-server")]
@@ -47,27 +48,29 @@ enum ConfigCommand {
     Show,
 }
 
-pub fn run() {
+pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Up => commands::up::run(),
-        Command::Down => commands::down::run(),
-        Command::Restart => commands::restart::run(),
-        Command::Serve => commands::serve::run(),
+        Command::Up => commands::up::run()?,
+        Command::Down => commands::down::run()?,
+        Command::Restart => commands::restart::run()?,
+        Command::Serve => commands::serve::run()?,
         Command::Status => commands::status::run(),
         Command::Auth { command } => match command {
             AuthCommand::RegisterKey { name, public_key } => {
-                commands::auth::register_key::run(name, public_key)
+                commands::auth::register_key::run(name, public_key)?
             }
-            AuthCommand::ListKeys => commands::auth::list_keys::run(),
-            AuthCommand::RevokeKey { key_id } => commands::auth::revoke_key::run(key_id),
+            AuthCommand::ListKeys => commands::auth::list_keys::run()?,
+            AuthCommand::RevokeKey { key_id } => commands::auth::revoke_key::run(key_id)?,
         },
         Command::Config { command } => match command {
             ConfigCommand::SetPublicUrl { public_url } => {
-                commands::config::set_public_url::run(public_url)
+                commands::config::set_public_url::run(public_url)?
             }
-            ConfigCommand::Show => commands::config::show::run(),
+            ConfigCommand::Show => commands::config::show::run()?,
         },
     }
+
+    Ok(())
 }

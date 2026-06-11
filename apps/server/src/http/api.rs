@@ -36,19 +36,10 @@ impl BackgroundService for ApiService {
         mut shutdown: ShutdownWatch,
         ready_notifier: ServiceReadyNotifier,
     ) {
-        let protected_api = Router::new()
-            .route("/api/services", get(list_services))
-            .route("/admin/api/services", get(list_services))
-            .route_layer(middleware::from_fn_with_state(
-                self.state.clone(),
-                require_signed_request,
-            ));
-
-        let app = Router::new()
-            .route("/", get(root))
-            .route("/admin", get(root))
+        // The control plane is reachable both at the root and under /admin.
+        let app = api_routes(&self.state)
+            .nest("/admin", api_routes(&self.state))
             .route("/healthz", get(healthz))
-            .merge(protected_api)
             .with_state(self.state.clone());
 
         let listener = tokio::net::TcpListener::bind(self.state.api_addr)
@@ -64,6 +55,17 @@ impl BackgroundService for ApiService {
             .await
             .expect("API service exited with error");
     }
+}
+
+fn api_routes(state: &AppState) -> Router<AppState> {
+    let protected = Router::new()
+        .route("/api/services", get(list_services))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_signed_request,
+        ));
+
+    Router::new().route("/", get(root)).merge(protected)
 }
 
 async fn root(State(state): State<AppState>) -> String {

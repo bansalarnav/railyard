@@ -29,11 +29,16 @@ impl RoutingTable {
         }
     }
 
-    fn route_for_request(&self, _request: &RequestHeader) -> RouteTarget {
+    fn api_route(&self) -> RouteTarget {
         RouteTarget {
             upstream_addr: self.api_addr,
             upstream_name: "api".to_string(),
         }
+    }
+
+    // Routing is host/path-agnostic for now: everything goes to the API.
+    fn route_for_request(&self, _request: &RequestHeader) -> RouteTarget {
+        self.api_route()
     }
 }
 
@@ -42,10 +47,7 @@ impl ProxyHttp for ControlPlaneProxy {
     type CTX = RouteTarget;
 
     fn new_ctx(&self) -> Self::CTX {
-        RouteTarget {
-            upstream_addr: self.routes.api_addr,
-            upstream_name: "api".to_string(),
-        }
+        self.routes.api_route()
     }
 
     async fn upstream_peer(

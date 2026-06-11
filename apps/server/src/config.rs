@@ -54,7 +54,7 @@ fn server_config_path() -> PathBuf {
     config_root().join("server").join("config.json")
 }
 
-fn config_root() -> PathBuf {
+pub(crate) fn config_root() -> PathBuf {
     if let Ok(path) = env::var("XDG_CONFIG_HOME") {
         return PathBuf::from(path).join("railyard");
     }

@@ -1,14 +1,11 @@
+use std::error::Error;
+
 use crate::config::ServerConfigStore;
 
-pub(crate) fn run() {
+pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let store = ServerConfigStore::load();
-    let config = store
-        .read()
-        .expect("failed to read server config")
-        .expect("server config is not initialized");
-    let control_plane_url = store
-        .control_plane_url()
-        .expect("failed to resolve control plane URL");
+    let config = store.read()?.ok_or("server config is not initialized")?;
+    let control_plane_url = store.control_plane_url()?;
 
     println!(
         "{}",
@@ -17,4 +14,6 @@ pub(crate) fn run() {
             "control_plane_url": control_plane_url,
         })
     );
+
+    Ok(())
 }

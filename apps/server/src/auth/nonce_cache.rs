@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 #[derive(Clone, Default)]
 pub(crate) struct NonceCache {
@@ -13,7 +13,7 @@ impl NonceCache {
     pub(crate) fn check_and_store(&self, key_id: &str, nonce: &str, now: u64) -> bool {
         let mut seen = self.seen.lock().expect("nonce cache mutex poisoned");
         let cutoff = now.saturating_sub(Self::TTL.as_secs());
-        seen.retain(|_, expires_at| *expires_at >= cutoff);
+        seen.retain(|_, seen_at| *seen_at >= cutoff);
 
         let cache_key = format!("{key_id}:{nonce}");
         if seen.contains_key(&cache_key) {
@@ -22,12 +22,5 @@ impl NonceCache {
 
         seen.insert(cache_key, now);
         true
-    }
-
-    pub(crate) fn now_unix_secs() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock before unix epoch")
-            .as_secs()
     }
 }

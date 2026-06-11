@@ -1,5 +1,6 @@
 use crate::daemon;
+use std::io;
 
-pub(crate) fn run() {
-    daemon::serve();
+pub(crate) fn run() -> io::Result<()> {
+    daemon::serve()
 }

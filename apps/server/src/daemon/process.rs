@@ -9,30 +9,28 @@ use std::{
 
 use crate::http::run_server;
 
-pub(crate) fn up() {
+pub(crate) fn up() -> io::Result<()> {
     if let Some(pid) = read_running_pid() {
         println!("Railyard server is already running with pid {pid}");
-        return;
+        return Ok(());
     }
 
-    ensure_runtime_dir().expect("failed to create railyard runtime directory");
-    run_server(true, &pid_file_path(), &upgrade_sock_path());
+    ensure_runtime_dir()?;
+    run_server(true, &pid_file_path(), &upgrade_sock_path())
 }
 
-pub(crate) fn serve() {
-    ensure_runtime_dir().expect("failed to create railyard runtime directory");
-    run_server(false, &pid_file_path(), &upgrade_sock_path());
+pub(crate) fn serve() -> io::Result<()> {
+    ensure_runtime_dir()?;
+    run_server(false, &pid_file_path(), &upgrade_sock_path())
 }
 
-pub(crate) fn down() {
-    if stop_running_server() {
-        return;
-    }
+pub(crate) fn down() -> io::Result<()> {
+    stop_running_server()
 }
 
-pub(crate) fn restart() {
-    stop_running_server();
-    up();
+pub(crate) fn restart() -> io::Result<()> {
+    stop_running_server()?;
+    up()
 }
 
 pub(crate) fn status() {
@@ -42,32 +40,33 @@ pub(crate) fn status() {
     }
 }
 
-fn stop_running_server() -> bool {
+fn stop_running_server() -> io::Result<()> {
     let pid_path = pid_file_path();
     let Some(pid) = read_pid_file(&pid_path) else {
         println!("Railyard server is not running");
-        return false;
+        return Ok(());
     };
 
     if !process_exists(pid) {
         let _ = fs::remove_file(&pid_path);
         println!("Removed stale pid file for pid {pid}");
-        return false;
+        return Ok(());
     }
 
-    kill(Pid::from_raw(pid), Signal::SIGTERM).expect("failed to signal running server");
+    kill(Pid::from_raw(pid), Signal::SIGTERM)
+        .map_err(|errno| io::Error::from_raw_os_error(errno as i32))?;
 
     for _ in 0..50 {
         if !process_exists(pid) {
             let _ = fs::remove_file(&pid_path);
             println!("Stopped Railyard server (pid {pid})");
-            return true;
+            return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
     }
 
     println!("Sent SIGTERM to pid {pid}, but it is still shutting down");
-    false
+    Ok(())
 }
 
 fn read_running_pid() -> Option<i32> {

@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-base64 = "0.22"
-clap = { version = "4.5", features = ["derive"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-hex = "0.4"
+base64.workspace = true
+clap.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
 rand = "0.8"
+railyard-auth.workspace = true
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-url = "2"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true

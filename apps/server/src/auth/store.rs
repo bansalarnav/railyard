@@ -1,13 +1,14 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use ed25519_dalek::VerifyingKey;
+use railyard_auth::unix_timestamp;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
 use ulid::Ulid;
+
+use crate::config::config_root;
 
 #[derive(Clone)]
 pub(crate) struct AuthStore {
@@ -103,14 +104,14 @@ impl AuthStore {
 
         let key_bytes = BASE64_STANDARD
             .decode(record.public_key_base64.as_bytes())
-            .map_err(invalid_input)?;
+            .map_err(invalid_data)?;
 
         let verifying_key = VerifyingKey::from_bytes(
             &key_bytes
                 .try_into()
-                .map_err(|_| invalid_input("public key must be 32 bytes"))?,
+                .map_err(|_| invalid_data("public key must be 32 bytes"))?,
         )
-        .map_err(invalid_input)?;
+        .map_err(invalid_data)?;
 
         Ok(Some(verifying_key))
     }
@@ -121,7 +122,7 @@ impl AuthStore {
         }
 
         let raw = fs::read_to_string(&self.path)?;
-        serde_json::from_str(&raw).map_err(invalid_input)
+        serde_json::from_str(&raw).map_err(invalid_data)
     }
 
     fn write_file(&self, store: &AuthStoreFile) -> io::Result<()> {
@@ -129,7 +130,7 @@ impl AuthStore {
             fs::create_dir_all(parent)?;
         }
 
-        let raw = serde_json::to_string_pretty(store).map_err(invalid_input)?;
+        let raw = serde_json::to_string_pretty(store).map_err(invalid_data)?;
         fs::write(&self.path, raw)
     }
 }
@@ -138,22 +139,6 @@ fn server_auth_store_path() -> PathBuf {
     config_root().join("server").join("auth-keys.json")
 }
 
-fn config_root() -> PathBuf {
-    if let Ok(path) = env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(path).join("railyard");
-    }
-
-    let home = env::var("HOME").expect("HOME must be set when XDG_CONFIG_HOME is unset");
-    Path::new(&home).join(".config").join("railyard")
-}
-
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
-        .as_secs()
-}
-
-fn invalid_input(error: impl std::fmt::Display) -> io::Error {
+fn invalid_data(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }

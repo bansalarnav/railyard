@@ -1,3 +1,7 @@
+use railyard_auth::{
+    HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION,
+    HEADER_TIMESTAMP, SIGNATURE_VERSION,
+};
 use reqwest::Url;
 use reqwest::blocking::Client;
 use serde_json::Value;
@@ -32,12 +36,12 @@ pub(crate) fn list_services(profile_name: &str) -> Result<Value, Box<dyn Error>>
     let response = Client::new()
         .get(services_url)
         .header("host", host)
-        .header("x-railyard-key-id", signed.key_id)
-        .header("x-railyard-timestamp", signed.timestamp.to_string())
-        .header("x-railyard-nonce", signed.nonce)
-        .header("x-railyard-content-sha256", signed.content_sha256)
-        .header("x-railyard-signature", signed.signature)
-        .header("x-railyard-signature-version", "v1")
+        .header(HEADER_KEY_ID, signed.key_id)
+        .header(HEADER_TIMESTAMP, signed.timestamp.to_string())
+        .header(HEADER_NONCE, signed.nonce)
+        .header(HEADER_CONTENT_SHA256, signed.content_sha256)
+        .header(HEADER_SIGNATURE, signed.signature)
+        .header(HEADER_SIGNATURE_VERSION, SIGNATURE_VERSION)
         .send()?
         .error_for_status()?;
 

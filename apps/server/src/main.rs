@@ -7,5 +7,9 @@ mod http;
 
 fn main() {
     env_logger::init();
-    cli::run();
+
+    if let Err(error) = cli::run() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
 }

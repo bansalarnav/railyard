@@ -1,7 +1,8 @@
 use std::{
     collections::BTreeMap,
-    env,
+    env, io,
     net::{IpAddr, SocketAddr},
+    str::FromStr,
     sync::Arc,
 };
 
@@ -17,64 +18,49 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    pub(crate) fn load() -> Self {
-        Self {
-            proxy_addr: SocketAddr::from((proxy_host(), proxy_port())),
-            api_addr: SocketAddr::from((api_host(), api_port())),
-            service_upstreams: Arc::new(configured_service_upstreams()),
+    pub(crate) fn load() -> io::Result<Self> {
+        let proxy_host: IpAddr = parsed_env("PROXY_HOST", [127, 0, 0, 1].into(), "an IP address")?;
+        let proxy_port: u16 = parsed_env("PROXY_PORT", 3000, "a port number")?;
+        let api_host: IpAddr = parsed_env("API_HOST", [127, 0, 0, 1].into(), "an IP address")?;
+        let api_port: u16 = parsed_env("API_PORT", 3001, "a port number")?;
+
+        Ok(Self {
+            proxy_addr: SocketAddr::from((proxy_host, proxy_port)),
+            api_addr: SocketAddr::from((api_host, api_port)),
+            service_upstreams: Arc::new(configured_service_upstreams()?),
             auth_store: AuthStore::load(),
             auth_nonce_cache: NonceCache::default(),
-        }
+        })
     }
 }
 
-fn configured_service_upstreams() -> BTreeMap<String, SocketAddr> {
+fn configured_service_upstreams() -> io::Result<BTreeMap<String, SocketAddr>> {
     env::vars()
-        .filter_map(|(key, value)| {
-            let service = key.strip_prefix("CONTAINER_UPSTREAM_")?;
-            let service = env_key_to_service_name(service);
-            let upstream = value.parse().unwrap_or_else(|_| {
-                panic!("invalid upstream socket address for {key}: {value:?}");
-            });
-            Some((service, upstream))
+        .filter(|(key, _)| key.starts_with("CONTAINER_UPSTREAM_"))
+        .map(|(key, value)| {
+            let service = env_key_to_service_name(&key["CONTAINER_UPSTREAM_".len()..]);
+            let upstream = value
+                .parse()
+                .map_err(|_| invalid_env(&key, &value, "a socket address"))?;
+            Ok((service, upstream))
         })
         .collect()
 }
 
-fn proxy_host() -> IpAddr {
-    match env::var("PROXY_HOST") {
-        Ok(value) => value.parse().unwrap_or_else(|_| {
-            panic!("PROXY_HOST must be a valid IP address, got {value:?}");
-        }),
-        Err(_) => IpAddr::from([127, 0, 0, 1]),
+fn parsed_env<T: FromStr>(name: &str, default: T, expected: &str) -> io::Result<T> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse()
+            .map_err(|_| invalid_env(name, &value, expected)),
+        Err(_) => Ok(default),
     }
 }
 
-fn proxy_port() -> u16 {
-    match env::var("PROXY_PORT") {
-        Ok(value) => value.parse().unwrap_or_else(|_| {
-            panic!("PROXY_PORT must be a valid port number, got {value:?}");
-        }),
-        Err(_) => 3000,
-    }
-}
-
-fn api_host() -> IpAddr {
-    match env::var("API_HOST") {
-        Ok(value) => value.parse().unwrap_or_else(|_| {
-            panic!("API_HOST must be a valid IP address, got {value:?}");
-        }),
-        Err(_) => IpAddr::from([127, 0, 0, 1]),
-    }
-}
-
-fn api_port() -> u16 {
-    match env::var("API_PORT") {
-        Ok(value) => value.parse().unwrap_or_else(|_| {
-            panic!("API_PORT must be a valid port number, got {value:?}");
-        }),
-        Err(_) => 3001,
-    }
+fn invalid_env(name: &str, value: &str, expected: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{name} must be {expected}, got {value:?}"),
+    )
 }
 
 fn env_key_to_service_name(key: &str) -> String {

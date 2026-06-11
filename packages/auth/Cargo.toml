@@ -1,0 +1,6 @@
+[package]
+name = "railyard-auth"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

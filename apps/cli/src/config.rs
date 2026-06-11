@@ -28,14 +28,14 @@ pub(crate) fn write_profile(profile_name: &str, profile: &ClientProfile) -> io::
         fs::create_dir_all(parent)?;
     }
 
-    let raw = serde_json::to_string_pretty(profile).map_err(invalid_input)?;
+    let raw = serde_json::to_string_pretty(profile).map_err(invalid_data)?;
     fs::write(&path, raw)?;
     Ok(path)
 }
 
 pub(crate) fn read_profile(profile_name: &str) -> io::Result<ClientProfile> {
     let raw = fs::read_to_string(profile_path(profile_name))?;
-    serde_json::from_str(&raw).map_err(invalid_input)
+    serde_json::from_str(&raw).map_err(invalid_data)
 }
 
 pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::Result<PathBuf> {
@@ -48,7 +48,7 @@ pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::R
         key_id: key_id.to_string(),
         secret_key_base64: BASE64_STANDARD.encode(signing_key.to_bytes()),
     })
-    .map_err(invalid_input)?;
+    .map_err(invalid_data)?;
 
     fs::write(&path, raw)?;
     set_private_permissions(&path)?;
@@ -57,14 +57,14 @@ pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::R
 
 pub(crate) fn read_signing_key(path: &str) -> io::Result<SigningKey> {
     let raw = fs::read_to_string(path)?;
-    let stored: StoredPrivateKey = serde_json::from_str(&raw).map_err(invalid_input)?;
+    let stored: StoredPrivateKey = serde_json::from_str(&raw).map_err(invalid_data)?;
     let secret_key = BASE64_STANDARD
         .decode(stored.secret_key_base64.as_bytes())
-        .map_err(invalid_input)?;
+        .map_err(invalid_data)?;
 
     let secret_key: [u8; 32] = secret_key
         .try_into()
-        .map_err(|_| invalid_input("secret key must be 32 bytes"))?;
+        .map_err(|_| invalid_data("secret key must be 32 bytes"))?;
 
     Ok(SigningKey::from_bytes(&secret_key))
 }
@@ -118,7 +118,7 @@ fn config_root() -> PathBuf {
     Path::new(&home).join(".config").join("railyard")
 }
 
-fn invalid_input(error: impl std::fmt::Display) -> io::Error {
+fn invalid_data(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
 
