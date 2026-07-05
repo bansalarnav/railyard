@@ -9,4 +9,4 @@ exec cargo watch \
   -w packages \
   -w Cargo.toml \
   -w Cargo.lock \
-  -x "run -p railyard-server -- serve"
+  -x "run -p railyard-server -- up --foreground"
