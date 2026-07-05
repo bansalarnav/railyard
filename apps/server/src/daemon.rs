@@ -9,19 +9,14 @@ use std::{
 
 use crate::http::run_server;
 
-pub(crate) fn up() -> io::Result<()> {
+pub(crate) fn up(foreground: bool) -> io::Result<()> {
     if let Some(pid) = read_running_pid() {
         println!("Railyard server is already running with pid {pid}");
         return Ok(());
     }
 
     ensure_runtime_dir()?;
-    run_server(true, &pid_file_path(), &upgrade_sock_path())
-}
-
-pub(crate) fn serve() -> io::Result<()> {
-    ensure_runtime_dir()?;
-    run_server(false, &pid_file_path(), &upgrade_sock_path())
+    run_server(!foreground, &pid_file_path(), &upgrade_sock_path())
 }
 
 pub(crate) fn down() -> io::Result<()> {
@@ -30,7 +25,7 @@ pub(crate) fn down() -> io::Result<()> {
 
 pub(crate) fn restart() -> io::Result<()> {
     stop_running_server()?;
-    up()
+    up(false)
 }
 
 pub(crate) fn status() {

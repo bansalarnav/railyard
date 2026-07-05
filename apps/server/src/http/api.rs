@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use axum::extract::State;
-use axum::middleware;
 use axum::{Json, Router, routing::get};
 use pingora::server::ShutdownWatch;
 use pingora::services::ServiceReadyNotifier;
@@ -8,8 +7,6 @@ use pingora::services::background::BackgroundService;
 use serde::Serialize;
 
 use super::state::AppState;
-use crate::app::APP_NAME;
-use crate::auth::require_signed_request;
 
 pub(crate) struct ApiService {
     pub(crate) state: AppState,
@@ -23,7 +20,6 @@ struct ServiceEntry {
 
 #[derive(Serialize)]
 struct ServicesResponse {
-    app_name: &'static str,
     proxy_addr: String,
     api_addr: String,
     services: Vec<ServiceEntry>,
@@ -36,9 +32,11 @@ impl BackgroundService for ApiService {
         mut shutdown: ShutdownWatch,
         ready_notifier: ServiceReadyNotifier,
     ) {
-        // The control plane is reachable both at the root and under /admin.
-        let app = api_routes(&self.state)
-            .nest("/admin", api_routes(&self.state))
+        // The proxy forwards `railyard.*` hosts with the path untouched and
+        // `/railyard/...` paths with the prefix intact, so serve the same
+        // routes at the root and under /railyard.
+        let app = api_routes()
+            .nest("/railyard", api_routes())
             .route("/healthz", get(healthz))
             .with_state(self.state.clone());
 
@@ -57,15 +55,10 @@ impl BackgroundService for ApiService {
     }
 }
 
-fn api_routes(state: &AppState) -> Router<AppState> {
-    let protected = Router::new()
+fn api_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", get(root))
         .route("/api/services", get(list_services))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_signed_request,
-        ));
-
-    Router::new().route("/", get(root)).merge(protected)
 }
 
 async fn root(State(state): State<AppState>) -> String {
@@ -92,7 +85,6 @@ async fn list_services(State(state): State<AppState>) -> Json<ServicesResponse> 
         .collect();
 
     Json(ServicesResponse {
-        app_name: APP_NAME,
         proxy_addr: state.proxy_addr.to_string(),
         api_addr: state.api_addr.to_string(),
         services,
