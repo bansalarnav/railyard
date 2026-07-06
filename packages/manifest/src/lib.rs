@@ -2,11 +2,11 @@
 //!
 //! Shared by the CLI (parse before upload, write ids back during
 //! `railyard new`/`link`) and the server (parse uploads and pushed commits).
-//! See docs/config.md for the format itself.
+//! See docs/manifest.md for the format itself.
 //!
 //! ```
-//! let config = railyard_config::parse(input)?;
-//! let staging = config.resolve_environment("staging")?;
+//! let manifest = railyard_manifest::parse(input)?;
+//! let staging = manifest.resolve_environment("staging")?;
 //! ```
 
 mod model;
@@ -20,7 +20,7 @@ pub use reference::{InvalidReference, Reference, parse_references};
 pub use validate::ValidationError;
 
 #[derive(Debug)]
-pub enum ConfigError {
+pub enum ManifestError {
     /// Not JSON at all; carries serde's line/column message.
     Syntax(serde_json::Error),
     /// JSON, but the wrong shape (unknown field, wrong type, ...).
@@ -30,13 +30,13 @@ pub enum ConfigError {
     Invalid(Vec<ValidationError>),
 }
 
-impl fmt::Display for ConfigError {
+impl fmt::Display for ManifestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConfigError::Syntax(err) => write!(f, "invalid JSON: {err}"),
-            ConfigError::Shape { path, message } if path == "." => write!(f, "{message}"),
-            ConfigError::Shape { path, message } => write!(f, "{path}: {message}"),
-            ConfigError::Invalid(errors) => {
+            ManifestError::Syntax(err) => write!(f, "invalid JSON: {err}"),
+            ManifestError::Shape { path, message } if path == "." => write!(f, "{message}"),
+            ManifestError::Shape { path, message } => write!(f, "{path}: {message}"),
+            ManifestError::Invalid(errors) => {
                 for (i, error) in errors.iter().enumerate() {
                     if i > 0 {
                         writeln!(f)?;
@@ -49,19 +49,19 @@ impl fmt::Display for ConfigError {
     }
 }
 
-impl std::error::Error for ConfigError {}
+impl std::error::Error for ManifestError {}
 
 /// Parse and fully validate a `.railyard.json` string, including checking
-/// that every `environments` overlay resolves to a valid config.
-pub fn parse(input: &str) -> Result<RailyardConfig, ConfigError> {
-    let raw: serde_json::Value = serde_json::from_str(input).map_err(ConfigError::Syntax)?;
-    let config = parse_value(raw)?;
+/// that every `environments` overlay resolves to a valid manifest.
+pub fn parse(input: &str) -> Result<RailyardManifest, ManifestError> {
+    let raw: serde_json::Value = serde_json::from_str(input).map_err(ManifestError::Syntax)?;
+    let manifest = parse_value(raw)?;
 
     let mut errors = Vec::new();
-    for name in config.environments.keys() {
-        match config.resolve_environment(name) {
+    for name in manifest.environments.keys() {
+        match manifest.resolve_environment(name) {
             Ok(_) => {}
-            Err(ConfigError::Invalid(env_errors)) => {
+            Err(ManifestError::Invalid(env_errors)) => {
                 errors.extend(env_errors.into_iter().map(|error| {
                     ValidationError::new(
                         format!("environments.{name}.{}", error.path),
@@ -69,13 +69,13 @@ pub fn parse(input: &str) -> Result<RailyardConfig, ConfigError> {
                     )
                 }));
             }
-            Err(ConfigError::Shape { path, message }) => {
+            Err(ManifestError::Shape { path, message }) => {
                 errors.push(ValidationError::new(
                     format!("environments.{name}.{path}"),
                     message,
                 ));
             }
-            Err(ConfigError::Syntax(err)) => {
+            Err(ManifestError::Syntax(err)) => {
                 errors.push(ValidationError::new(
                     format!("environments.{name}"),
                     err.to_string(),
@@ -84,47 +84,47 @@ pub fn parse(input: &str) -> Result<RailyardConfig, ConfigError> {
         }
     }
     if !errors.is_empty() {
-        return Err(ConfigError::Invalid(errors));
+        return Err(ManifestError::Invalid(errors));
     }
-    Ok(config)
+    Ok(manifest)
 }
 
-/// Deserialize + validate one concrete config (environment overlays are not
+/// Deserialize + validate one concrete manifest (environment overlays are not
 /// followed here — `parse` handles those).
-fn parse_value(raw: serde_json::Value) -> Result<RailyardConfig, ConfigError> {
-    let config: RailyardConfig =
-        serde_path_to_error::deserialize(raw).map_err(|err| ConfigError::Shape {
+fn parse_value(raw: serde_json::Value) -> Result<RailyardManifest, ManifestError> {
+    let manifest: RailyardManifest =
+        serde_path_to_error::deserialize(raw).map_err(|err| ManifestError::Shape {
             path: err.path().to_string(),
             message: err.inner().to_string(),
         })?;
-    let errors = validate::validate(&config);
+    let errors = validate::validate(&manifest);
     if !errors.is_empty() {
-        return Err(ConfigError::Invalid(errors));
+        return Err(ManifestError::Invalid(errors));
     }
-    Ok(config)
+    Ok(manifest)
 }
 
-impl RailyardConfig {
-    /// The config with one `environments` overlay deep-merged in (objects
+impl RailyardManifest {
+    /// The manifest with one `environments` overlay deep-merged in (objects
     /// merge, `null` deletes a key, everything else replaces). The result has
     /// no `environments` of its own and is re-validated as a whole.
-    pub fn resolve_environment(&self, name: &str) -> Result<RailyardConfig, ConfigError> {
+    pub fn resolve_environment(&self, name: &str) -> Result<RailyardManifest, ManifestError> {
         let overlay = self.environments.get(name).ok_or_else(|| {
-            ConfigError::Invalid(vec![ValidationError::new(
+            ManifestError::Invalid(vec![ValidationError::new(
                 "environments",
                 format!("no environment named `{name}`"),
             )])
         })?;
         if !overlay.is_object() {
-            return Err(ConfigError::Invalid(vec![ValidationError::new(
+            return Err(ManifestError::Invalid(vec![ValidationError::new(
                 format!("environments.{name}"),
                 "an environment overlay must be an object",
             )]));
         }
 
-        let mut base = serde_json::to_value(self).map_err(ConfigError::Syntax)?;
+        let mut base = serde_json::to_value(self).map_err(ManifestError::Syntax)?;
         base.as_object_mut()
-            .expect("config always serializes to an object")
+            .expect("manifest always serializes to an object")
             .remove("environments");
         deep_merge(&mut base, overlay);
         parse_value(base)
@@ -133,7 +133,7 @@ impl RailyardConfig {
     /// Serialize back to the canonical on-disk form: 2-space pretty JSON,
     /// original key order (maps preserve insertion order), trailing newline.
     pub fn to_json_string(&self) -> String {
-        let mut out = serde_json::to_string_pretty(self).expect("config always serializes cleanly");
+        let mut out = serde_json::to_string_pretty(self).expect("manifest always serializes cleanly");
         out.push('\n');
         out
     }

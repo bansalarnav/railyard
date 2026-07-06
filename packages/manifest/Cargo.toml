@@ -1,5 +1,5 @@
 [package]
-name = "railyard-config"
+name = "railyard-manifest"
 version.workspace = true
 edition.workspace = true
 

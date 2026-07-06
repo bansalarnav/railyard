@@ -10,13 +10,13 @@ pub const DEFAULT_AUTOSCALE_TARGET_CPU: u32 = 70;
 /// The parsed shape of a `.railyard.json` file.
 ///
 /// `environments` overlays are kept as raw JSON and applied with
-/// [`RailyardConfig::resolve_environment`](crate::RailyardConfig::resolve_environment),
-/// so the base config stays one concrete set of types instead of a parallel
+/// [`RailyardManifest::resolve_environment`](crate::RailyardManifest::resolve_environment),
+/// so the base manifest stays one concrete set of types instead of a parallel
 /// all-optional copy of every struct.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
-pub struct RailyardConfig {
+pub struct RailyardManifest {
     #[serde(rename = "$schema")]
     pub schema: Option<String>,
     pub project: Option<Project>,
@@ -27,7 +27,7 @@ pub struct RailyardConfig {
     pub environments: IndexMap<String, serde_json::Value>,
 }
 
-impl Default for RailyardConfig {
+impl Default for RailyardManifest {
     fn default() -> Self {
         Self {
             schema: None,
@@ -49,7 +49,7 @@ pub struct Project {
     pub name: String,
 }
 
-/// Project-level GitHub link: the repo that contains the config file.
+/// Project-level GitHub link: the repo that contains the manifest file.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -126,7 +126,7 @@ pub enum Source<'a> {
 
 impl Service {
     /// The service's source, if exactly one is declared. Validation rejects
-    /// zero or multiple sources, so on a validated config this is always Some.
+    /// zero or multiple sources, so on a validated manifest this is always Some.
     pub fn source(&self) -> Option<Source<'_>> {
         match (&self.path, &self.image, &self.github) {
             (Some(p), None, None) => Some(Source::Path(p)),

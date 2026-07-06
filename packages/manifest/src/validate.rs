@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::model::{RailyardConfig, Service, Strategy};
+use crate::model::{RailyardManifest, Service, Strategy};
 use crate::reference::{Reference, parse_references};
 
 #[derive(Debug, Clone)]
 pub struct ValidationError {
-    /// Where in the config, as a dotted path (`services.api.scale`).
+    /// Where in the manifest, as a dotted path (`services.api.scale`).
     pub path: String,
     pub message: String,
 }
@@ -26,10 +26,10 @@ impl fmt::Display for ValidationError {
     }
 }
 
-pub fn validate(config: &RailyardConfig) -> Vec<ValidationError> {
+pub fn validate(manifest: &RailyardManifest) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    if let Some(project) = &config.project {
+    if let Some(project) = &manifest.project {
         if !is_valid_name(&project.name) {
             errors.push(ValidationError::new(
                 "project.name",
@@ -38,15 +38,15 @@ pub fn validate(config: &RailyardConfig) -> Vec<ValidationError> {
         }
     }
 
-    if let Some(github) = &config.github {
+    if let Some(github) = &manifest.github {
         check_repo(&mut errors, "github.repo", &github.repo);
     }
 
-    for (name, service) in &config.services {
-        validate_service(&mut errors, config, name, service);
+    for (name, service) in &manifest.services {
+        validate_service(&mut errors, manifest, name, service);
     }
 
-    if let Some(cycle) = find_env_reference_cycle(config) {
+    if let Some(cycle) = find_env_reference_cycle(manifest) {
         errors.push(ValidationError::new(
             "services",
             format!(
@@ -61,7 +61,7 @@ pub fn validate(config: &RailyardConfig) -> Vec<ValidationError> {
 
 fn validate_service(
     errors: &mut Vec<ValidationError>,
-    config: &RailyardConfig,
+    manifest: &RailyardManifest,
     name: &str,
     service: &Service,
 ) {
@@ -149,7 +149,7 @@ fn validate_service(
                 at("dependsOn"),
                 "a service cannot depend on itself",
             ));
-        } else if !config.services.contains_key(dependency) {
+        } else if !manifest.services.contains_key(dependency) {
             errors.push(ValidationError::new(
                 at("dependsOn"),
                 format!("unknown service `{dependency}`"),
@@ -235,7 +235,7 @@ fn validate_service(
             Err(invalid) => errors.push(ValidationError::new(&path, invalid.to_string())),
             Ok(references) => {
                 for reference in references {
-                    check_reference(errors, config, &path, &reference);
+                    check_reference(errors, manifest, &path, &reference);
                 }
             }
         }
@@ -244,14 +244,14 @@ fn validate_service(
 
 fn check_reference(
     errors: &mut Vec<ValidationError>,
-    config: &RailyardConfig,
+    manifest: &RailyardManifest,
     path: &str,
     reference: &Reference,
 ) {
     let Some(target) = reference.service() else {
         return; // secrets are resolved server-side; nothing to check here
     };
-    let Some(service) = config.services.get(target) else {
+    let Some(service) = manifest.services.get(target) else {
         errors.push(ValidationError::new(
             path,
             format!("references unknown service `{target}`"),
@@ -273,16 +273,16 @@ fn check_reference(
 /// Cycle detection over `services.<x>.env.<KEY>` references: an env value
 /// referencing another service's env means that service's env must resolve
 /// first. host/port/url references don't create resolution dependencies.
-fn find_env_reference_cycle(config: &RailyardConfig) -> Option<Vec<String>> {
+fn find_env_reference_cycle(manifest: &RailyardManifest) -> Option<Vec<String>> {
     let mut edges: HashMap<&str, Vec<&str>> = HashMap::new();
-    for (name, service) in &config.services {
+    for (name, service) in &manifest.services {
         for value in service.env.values() {
             let Ok(references) = parse_references(value) else {
                 continue; // already reported as an invalid reference
             };
             for reference in references {
                 if let Reference::ServiceEnv(target, _) = reference {
-                    if let Some((target, _)) = config.services.get_key_value(target.as_str()) {
+                    if let Some((target, _)) = manifest.services.get_key_value(target.as_str()) {
                         edges.entry(name).or_default().push(target);
                     }
                 }
@@ -366,18 +366,18 @@ fn check_repo(errors: &mut Vec<ValidationError>, path: &str, repo: &str) {
     }
 }
 
-/// Paths in the config (service dirs, env files) must stay inside the
-/// directory that holds the config file.
+/// Paths in the manifest (service dirs, env files) must stay inside the
+/// directory that holds the manifest file.
 fn check_relative_path(errors: &mut Vec<ValidationError>, at: &str, path: &str) {
     if path.starts_with('/') {
         errors.push(ValidationError::new(
             at,
-            format!("`{path}` must be relative to the config file"),
+            format!("`{path}` must be relative to the manifest file"),
         ));
     } else if path.split('/').any(|component| component == "..") {
         errors.push(ValidationError::new(
             at,
-            format!("`{path}` must not escape the config file's directory (`..`)"),
+            format!("`{path}` must not escape the manifest file's directory (`..`)"),
         ));
     }
 }

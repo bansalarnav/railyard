@@ -2158,7 +2158,7 @@ name = "railyard-auth"
 version = "0.1.0"
 
 [[package]]
-name = "railyard-config"
+name = "railyard-manifest"
 version = "0.1.0"
 dependencies = [
  "indexmap 2.13.1",
