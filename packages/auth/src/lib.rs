@@ -1,6 +1,13 @@
 //! The request authentication contract shared between the Railyard client
 //! and server, so both sides always agree on it.
 
+mod invite;
+
+pub use invite::{
+    INVITE_BLOB_PREFIX, InviteParseError, InvitePayload, REDEEM_INVITE_PATH, RedeemInviteRequest,
+    RedeemInviteResponse,
+};
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const SIGNATURE_VERSION: &str = "v1";

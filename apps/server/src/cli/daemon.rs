@@ -1,13 +1,14 @@
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     thread,
     time::Duration,
 };
 
 use crate::http::run_server;
+use crate::paths::runtime_dir;
 
 pub(crate) fn up(foreground: bool) -> io::Result<()> {
     if let Some(pid) = read_running_pid() {
@@ -85,22 +86,6 @@ fn pid_file_path() -> PathBuf {
 
 fn upgrade_sock_path() -> PathBuf {
     runtime_dir().join("upgrade.sock")
-}
-
-fn runtime_dir() -> PathBuf {
-    state_root().join("server")
-}
-
-fn state_root() -> PathBuf {
-    if let Ok(path) = env::var("XDG_STATE_HOME") {
-        return PathBuf::from(path).join("railyard");
-    }
-
-    let home = env::var("HOME").expect("HOME must be set when XDG_STATE_HOME is unset");
-    Path::new(&home)
-        .join(".local")
-        .join("state")
-        .join("railyard")
 }
 
 fn read_pid_file(path: &Path) -> Option<i32> {

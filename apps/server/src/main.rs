@@ -1,6 +1,7 @@
 mod cli;
-mod daemon;
+mod db;
 mod http;
+mod paths;
 
 fn main() {
     env_logger::init();

@@ -1,7 +1,8 @@
+mod daemon;
+mod user;
+
 use clap::{Parser, Subcommand};
 use std::io;
-
-use crate::daemon;
 
 #[derive(Parser)]
 #[command(name = "railyard-server")]
@@ -26,6 +27,21 @@ enum Command {
     Restart,
     /// Show whether the server daemon is running.
     Status,
+    /// Manage users (one user = one device keypair).
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UserCommand {
+    /// Create a user and print its single-use invite blob.
+    Add { name: String },
+    /// List users and whether their invite has been redeemed.
+    List,
+    /// Delete a user, revoking its key.
+    Remove { name: String },
 }
 
 pub(crate) fn run() -> io::Result<()> {
@@ -37,5 +53,10 @@ pub(crate) fn run() -> io::Result<()> {
             daemon::status();
             Ok(())
         }
+        Command::User { command } => match command {
+            UserCommand::Add { name } => user::add(&name),
+            UserCommand::List => user::list(),
+            UserCommand::Remove { name } => user::remove(&name),
+        },
     }
 }

@@ -6,9 +6,18 @@ edition.workspace = true
 [dependencies]
 async-trait = "0.1"
 axum = "0.8"
+base64.workspace = true
 clap.workspace = true
+ed25519-dalek.workspace = true
 env_logger = "0.11"
+hex.workspace = true
+log = "0.4"
 nix = { version = "0.30", features = ["signal", "process"] }
 pingora = { version = "0.8.0", features = ["proxy"] }
+rand.workspace = true
+railyard-auth.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 tokio = { version = "1", features = ["net", "rt-multi-thread"] }
+libsql = { version = "0.9", default-features = false, features = ["core"] }

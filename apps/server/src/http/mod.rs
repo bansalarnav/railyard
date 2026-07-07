@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod proxy;
 mod server;
 mod state;

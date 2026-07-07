@@ -1,16 +1,28 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     env, io,
     net::{IpAddr, SocketAddr},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
+
+use crate::db::Db;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) proxy_addr: SocketAddr,
     pub(crate) api_addr: SocketAddr,
     pub(crate) service_upstreams: Arc<BTreeMap<String, SocketAddr>>,
+}
+
+/// State for the internal API: app config plus the auth store and the nonce
+/// replay guard used by the signature middleware.
+#[derive(Clone)]
+pub(crate) struct ApiState {
+    pub(crate) app: AppState,
+    pub(crate) db: Arc<Db>,
+    /// nonce -> timestamp it was seen at, pruned past the signature window.
+    pub(crate) seen_nonces: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl AppState {
