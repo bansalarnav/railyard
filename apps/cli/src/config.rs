@@ -104,8 +104,6 @@ fn config_root() -> io::Result<PathBuf> {
     if let Some(home) = env::var_os("HOME") {
         return Ok(Path::new(&home).join(".config").join("railyard"));
     }
-
-    // Windows has no HOME; APPDATA is the conventional per-user config root.
     if let Some(appdata) = env::var_os("APPDATA") {
         return Ok(PathBuf::from(appdata).join("railyard"));
     }

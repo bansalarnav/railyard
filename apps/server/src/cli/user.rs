@@ -1,5 +1,3 @@
-//! `railyard-server user ...`: manage users and print invite blobs.
-
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use railyard_auth::{InvitePayload, unix_timestamp};

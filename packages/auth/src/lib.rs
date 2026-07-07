@@ -1,6 +1,3 @@
-//! The request authentication contract shared between the Railyard client
-//! and server, so both sides always agree on it.
-
 mod invite;
 
 pub use invite::{
@@ -18,8 +15,6 @@ pub const HEADER_TIMESTAMP: &str = "x-railyard-timestamp";
 pub const HEADER_NONCE: &str = "x-railyard-nonce";
 pub const HEADER_CONTENT_SHA256: &str = "x-railyard-content-sha256";
 pub const HEADER_SIGNATURE: &str = "x-railyard-signature";
-
-/// The string that is signed by the client and verified by the server.
 pub fn canonical_request(
     key_id: &str,
     timestamp: u64,

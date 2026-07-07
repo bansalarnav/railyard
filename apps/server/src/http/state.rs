@@ -14,14 +14,10 @@ pub(crate) struct AppState {
     pub(crate) api_addr: SocketAddr,
     pub(crate) service_upstreams: Arc<BTreeMap<String, SocketAddr>>,
 }
-
-/// State for the internal API: app config plus the auth store and the nonce
-/// replay guard used by the signature middleware.
 #[derive(Clone)]
 pub(crate) struct ApiState {
     pub(crate) app: AppState,
     pub(crate) db: Arc<Db>,
-    /// nonce -> timestamp it was seen at, pruned past the signature window.
     pub(crate) seen_nonces: Arc<Mutex<HashMap<String, u64>>>,
 }
 

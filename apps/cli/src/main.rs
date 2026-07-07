@@ -19,8 +19,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Redeem an invite blob (`ryd-invite-v1.…`) and save a profile for the
-    /// server it points at.
     Login {
         blob: String,
         #[arg(long)]

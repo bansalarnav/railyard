@@ -14,20 +14,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Start the server daemon.
     Up {
-        /// Run in the foreground instead of daemonizing (for dev and process
-        /// supervisors).
         #[arg(long)]
         foreground: bool,
     },
-    /// Stop the server daemon.
     Down,
-    /// Stop and start the server daemon.
     Restart,
-    /// Show whether the server daemon is running.
     Status,
-    /// Manage users (one user = one device keypair).
     User {
         #[command(subcommand)]
         command: UserCommand,
@@ -36,11 +29,8 @@ enum Command {
 
 #[derive(Subcommand)]
 enum UserCommand {
-    /// Create a user and print its single-use invite blob.
     Add { name: String },
-    /// List users and whether their invite has been redeemed.
     List,
-    /// Delete a user, revoking its key.
     Remove { name: String },
 }
 

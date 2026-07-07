@@ -6,13 +6,6 @@ pub const DEFAULT_HEALTHCHECK_TIMEOUT: u64 = 60;
 pub const DEFAULT_HEALTHCHECK_INTERVAL: u64 = 3;
 pub const DEFAULT_DRAIN_SECONDS: u64 = 30;
 pub const DEFAULT_AUTOSCALE_TARGET_CPU: u32 = 70;
-
-/// The parsed shape of a `.railyard.json` file.
-///
-/// `environments` overlays are kept as raw JSON and applied with
-/// [`RailyardManifest::resolve_environment`](crate::RailyardManifest::resolve_environment),
-/// so the base manifest stays one concrete set of types instead of a parallel
-/// all-optional copy of every struct.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
@@ -43,18 +36,13 @@ impl Default for RailyardManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Project {
-    /// Written by `railyard new` / `railyard link`; absent in a hand-written
-    /// file that has not been linked to a server project yet.
     pub id: Option<String>,
     pub name: String,
 }
-
-/// Project-level GitHub link: the repo that contains the manifest file.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GithubLink {
-    /// `owner/name`.
     pub repo: String,
     pub branch: Option<String>,
 }
@@ -84,7 +72,6 @@ pub struct Service {
     pub cron: Option<String>,
     pub strategy: Option<Strategy>,
     pub drain: Option<u64>,
-    /// volume name -> absolute mount path inside the container.
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     pub volumes: IndexMap<String, String>,
     pub resources: Option<Resources>,
@@ -115,8 +102,6 @@ impl Default for Service {
         }
     }
 }
-
-/// Exactly one of `path` / `image` / `github` must be set on a service.
 #[derive(Debug, Clone, Copy)]
 pub enum Source<'a> {
     Path(&'a str),
@@ -125,8 +110,6 @@ pub enum Source<'a> {
 }
 
 impl Service {
-    /// The service's source, if exactly one is declared. Validation rejects
-    /// zero or multiple sources, so on a validated manifest this is always Some.
     pub fn source(&self) -> Option<Source<'_>> {
         match (&self.path, &self.image, &self.github) {
             (Some(p), None, None) => Some(Source::Path(p)),
@@ -143,9 +126,6 @@ impl Service {
     pub fn restart(&self) -> RestartPolicy {
         self.restart.unwrap_or(RestartPolicy::OnFailure)
     }
-
-    /// `rolling` unless overridden — but volumes always force `recreate`,
-    /// since two containers must never share a volume.
     pub fn effective_strategy(&self) -> Strategy {
         if !self.volumes.is_empty() {
             Strategy::Recreate
@@ -158,16 +138,12 @@ impl Service {
         self.drain.unwrap_or(DEFAULT_DRAIN_SECONDS)
     }
 }
-
-/// Service source in a different GitHub repo.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ServiceGithub {
-    /// `owner/name`.
     pub repo: String,
     pub branch: Option<String>,
-    /// Subdirectory within that repo to build from.
     pub path: Option<String>,
 }
 
@@ -180,8 +156,6 @@ pub struct Build {
     pub args: IndexMap<String, String>,
     pub watch: Option<Vec<String>>,
 }
-
-/// `"public": true` or `"public": { "domain": ..., ... }`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Public {
@@ -196,9 +170,6 @@ impl Public {
             Public::Options(_) => true,
         }
     }
-
-    /// Custom domains, merging the `domain` and `domains` spellings.
-    /// Empty means "auto subdomain".
     pub fn domains(&self) -> Vec<&str> {
         match self {
             Public::Toggle(_) => Vec::new(),
@@ -219,7 +190,6 @@ pub struct PublicOptions {
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub domains: Vec<String>,
-    /// Path prefix for path-based routing on a shared domain.
     pub path: Option<String>,
 }
 
@@ -227,7 +197,6 @@ pub struct PublicOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Healthcheck {
-    /// HTTP path polled on the service's `port`.
     pub path: String,
     pub timeout: Option<u64>,
     pub interval: Option<u64>,
@@ -262,9 +231,7 @@ pub enum Strategy {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct Resources {
-    /// Cores, fractional allowed.
     pub cpu: Option<f64>,
-    /// `512Mi`, `1Gi`, ...
     pub memory: Option<String>,
 }
 
@@ -291,9 +258,6 @@ impl Autoscale {
             .unwrap_or(DEFAULT_AUTOSCALE_TARGET_CPU)
     }
 }
-
-/// Accept strings, numbers, and booleans as env values (`"PORT": 3000` is a
-/// mistake nobody should have to debug), normalizing everything to strings.
 fn de_env_map<'de, D>(deserializer: D) -> Result<IndexMap<String, String>, D::Error>
 where
     D: Deserializer<'de>,

@@ -1,5 +1,3 @@
-//! Invite redemption and the request-signature middleware.
-
 use axum::Json;
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -18,9 +16,6 @@ use sha2::{Digest, Sha256};
 
 use super::state::ApiState;
 use crate::db::token_hash;
-
-/// Signed timestamps are accepted within this window, and nonces are
-/// remembered for as long as their timestamp could still be accepted.
 const TIMESTAMP_WINDOW_SECONDS: u64 = 300;
 
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
@@ -67,7 +62,9 @@ pub(crate) async fn verify_signature(
 ) -> Response {
     match checked_request(&state, request).await {
         Ok(request) => next.run(request).await,
-        Err(reason) => (StatusCode::UNAUTHORIZED, format!("unauthorized: {reason}")).into_response(),
+        Err(reason) => {
+            (StatusCode::UNAUTHORIZED, format!("unauthorized: {reason}")).into_response()
+        }
     }
 }
 

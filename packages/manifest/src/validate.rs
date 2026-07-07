@@ -6,7 +6,6 @@ use crate::reference::{Reference, parse_references};
 
 #[derive(Debug, Clone)]
 pub struct ValidationError {
-    /// Where in the manifest, as a dotted path (`services.api.scale`).
     pub path: String,
     pub message: String,
 }
@@ -249,7 +248,7 @@ fn check_reference(
     reference: &Reference,
 ) {
     let Some(target) = reference.service() else {
-        return; // secrets are resolved server-side; nothing to check here
+        return;
     };
     let Some(service) = manifest.services.get(target) else {
         errors.push(ValidationError::new(
@@ -269,16 +268,12 @@ fn check_reference(
         ));
     }
 }
-
-/// Cycle detection over `services.<x>.env.<KEY>` references: an env value
-/// referencing another service's env means that service's env must resolve
-/// first. host/port/url references don't create resolution dependencies.
 fn find_env_reference_cycle(manifest: &RailyardManifest) -> Option<Vec<String>> {
     let mut edges: HashMap<&str, Vec<&str>> = HashMap::new();
     for (name, service) in &manifest.services {
         for value in service.env.values() {
             let Ok(references) = parse_references(value) else {
-                continue; // already reported as an invalid reference
+                continue;
             };
             for reference in references {
                 if let Reference::ServiceEnv(target, _) = reference {
@@ -365,9 +360,6 @@ fn check_repo(errors: &mut Vec<ValidationError>, path: &str, repo: &str) {
         ));
     }
 }
-
-/// Paths in the manifest (service dirs, env files) must stay inside the
-/// directory that holds the manifest file.
 fn check_relative_path(errors: &mut Vec<ValidationError>, at: &str, path: &str) {
     if path.starts_with('/') {
         errors.push(ValidationError::new(

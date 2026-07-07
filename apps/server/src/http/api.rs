@@ -44,10 +44,6 @@ impl BackgroundService for ApiService {
             db: Arc::new(db),
             seen_nonces: Arc::new(Mutex::new(HashMap::new())),
         };
-
-        // The proxy forwards `railyard.*` hosts with the path untouched and
-        // `/railyard/...` paths with the prefix intact, so serve the same
-        // routes at the root and under /railyard.
         let app = api_routes(&state)
             .nest("/railyard", api_routes(&state))
             .route("/healthz", get(healthz))
@@ -76,9 +72,6 @@ fn api_routes(state: &ApiState) -> Router<ApiState> {
             state.clone(),
             verify_signature,
         ));
-
-    // Invite redemption is the one unauthenticated endpoint: it is how a
-    // client gets a key in the first place.
     protected.route(REDEEM_INVITE_PATH, post(redeem_invite))
 }
 

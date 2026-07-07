@@ -1,5 +1,3 @@
-//! Users: one identity per device, holding at most one public key.
-
 use libsql::{Value, params};
 use std::io;
 
@@ -13,7 +11,6 @@ pub(crate) struct User {
 }
 
 impl Db {
-    /// Creates a user with no key yet. Fails if the name is taken.
     pub(crate) async fn create_user(&self, name: &str, now: u64) -> io::Result<String> {
         if self.user_id_by_name(name).await?.is_some() {
             return Err(io::Error::new(
@@ -56,8 +53,6 @@ impl Db {
 
         Ok(users)
     }
-
-    /// Deletes the user and its invites. Returns false if no such user.
     pub(crate) async fn remove_user(&self, name: &str) -> io::Result<bool> {
         let Some(user_id) = self.user_id_by_name(name).await? else {
             return Ok(false);
@@ -77,8 +72,6 @@ impl Db {
 
         Ok(true)
     }
-
-    /// Public key for a redeemed user, by the key id clients send in headers.
     pub(crate) async fn public_key_for(&self, key_id: &str) -> io::Result<Option<String>> {
         let mut rows = self
             .conn

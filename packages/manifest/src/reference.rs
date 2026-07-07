@@ -1,22 +1,14 @@
 use std::fmt;
-
-/// A `${{ ... }}` reference inside an env value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reference {
-    /// `${{ services.<name>.host }}` — the internal hostname (the name itself).
     ServiceHost(String),
-    /// `${{ services.<name>.port }}` — the declared port.
     ServicePort(String),
-    /// `${{ services.<name>.url }}` — `http://<name>:<port>`.
     ServiceUrl(String),
-    /// `${{ services.<name>.env.<KEY> }}` — a variable shared from another service.
     ServiceEnv(String, String),
-    /// `${{ secrets.<KEY> }}` — a server-stored secret.
     Secret(String),
 }
 
 impl Reference {
-    /// The service this reference points at, if any.
     pub fn service(&self) -> Option<&str> {
         match self {
             Reference::ServiceHost(name)
@@ -39,10 +31,6 @@ impl fmt::Display for InvalidReference {
         write!(f, "invalid reference `{}`: {}", self.token, self.reason)
     }
 }
-
-/// Extract every `${{ ... }}` reference from an env value. Text outside the
-/// double braces (including single `$VAR`) is left alone by design — the
-/// syntax exists so dotenv-style values never collide with it.
 pub fn parse_references(value: &str) -> Result<Vec<Reference>, InvalidReference> {
     let mut references = Vec::new();
     let mut rest = value;

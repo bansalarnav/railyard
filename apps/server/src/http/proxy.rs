@@ -35,10 +35,6 @@ impl RoutingTable {
         let host = request_host(request);
         self.route_for(host.as_deref(), request.uri.path())
     }
-
-    /// Requests on `/railyard` or a `railyard.*` host go to the API; any other
-    /// host whose first label names a configured service goes to that
-    /// service's upstream.
     fn route_for(&self, host: Option<&str>, path: &str) -> Option<RouteTarget> {
         let host_label = host.and_then(|host| host.split('.').next());
 
@@ -111,7 +107,6 @@ fn is_api_path(path: &str) -> bool {
 }
 
 fn request_host(request: &RequestHeader) -> Option<String> {
-    // HTTP/2 carries the authority in the URI; HTTP/1.1 uses the Host header.
     let host = match request.uri.host() {
         Some(host) => host,
         None => request.headers.get("host")?.to_str().ok()?,
@@ -157,7 +152,10 @@ mod tests {
             name_of(table.route_for(Some("example.com"), "/railyard/api/services")),
             Some("railyard".to_string())
         );
-        assert_eq!(name_of(table.route_for(Some("example.com"), "/railyardx")), None);
+        assert_eq!(
+            name_of(table.route_for(Some("example.com"), "/railyardx")),
+            None
+        );
     }
 
     #[test]
@@ -171,7 +169,10 @@ mod tests {
     #[test]
     fn unknown_host_has_no_route() {
         let table = table();
-        assert_eq!(name_of(table.route_for(Some("other.example.com"), "/")), None);
+        assert_eq!(
+            name_of(table.route_for(Some("other.example.com"), "/")),
+            None
+        );
         assert_eq!(name_of(table.route_for(None, "/")), None);
     }
 }

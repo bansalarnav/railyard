@@ -1,7 +1,3 @@
-//! Persistent auth state in a local libsql (SQLite) database shared by the
-//! daemon and the `railyard-server user` commands. Each table's queries and
-//! types live in its own module; this one owns the connection and schema.
-
 mod invite;
 mod user;
 
@@ -34,8 +30,6 @@ pub(crate) struct Db {
 }
 
 impl Db {
-    /// Opens the auth database at its well-known path. The daemon and the
-    /// CLI open it concurrently; WAL mode plus a busy timeout make that safe.
     pub(crate) async fn open() -> io::Result<Self> {
         let path = paths::database_path();
         if let Some(parent) = path.parent() {
@@ -48,7 +42,8 @@ impl Db {
         let db = Builder::new_local(path).build().await.map_err(db_error)?;
         let conn = db.connect().map_err(db_error)?;
 
-        conn.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .map_err(db_error)?;
         conn.query("PRAGMA journal_mode = WAL", ())
             .await
             .map_err(db_error)?;

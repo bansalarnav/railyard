@@ -1,6 +1,3 @@
-//! Invites: single-use, expiring tokens that bind a public key to a user.
-//! Only the SHA-256 of a token is stored; the token itself lives in the blob.
-
 use libsql::params;
 use sha2::{Digest, Sha256};
 use std::io;
@@ -26,17 +23,12 @@ impl Db {
 
         Ok(())
     }
-
-    /// Consumes an unredeemed, unexpired invite and binds the public key to
-    /// its user. Returns the user id (the key id) on success.
     pub(crate) async fn redeem_invite(
         &self,
         token_hash: &str,
         public_key: &str,
         now: u64,
     ) -> io::Result<Option<String>> {
-        // The single UPDATE is the atomic redeem gate: only one request can
-        // flip redeemed_at from NULL.
         let consumed = self
             .conn
             .execute(

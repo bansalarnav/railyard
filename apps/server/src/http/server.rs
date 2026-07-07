@@ -44,8 +44,6 @@ fn pingora_conf(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> io::Resul
     conf.daemon = daemon;
     conf.pid_file = pid_file.to_string_lossy().into_owned();
     conf.upgrade_sock = upgrade_sock.to_string_lossy().into_owned();
-    // Pingora's default grace period is 5 minutes, which would make `down`
-    // leave the process draining long after its wait loop gives up.
     conf.grace_period_seconds = Some(1);
     conf.graceful_shutdown_timeout_seconds = Some(3);
     Ok(conf)
