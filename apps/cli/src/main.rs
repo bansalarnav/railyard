@@ -3,13 +3,11 @@ mod config;
 mod http;
 
 use clap::{Parser, Subcommand};
+use railyard_auth::{InvitePayload, unix_timestamp};
 use std::error::Error;
-use std::process::Command;
 
-use auth::{BootstrapResponse, generate_signing_key, public_key_base64};
-use config::{
-    ClientProfile, default_device_name, sanitize_profile_name, write_profile, write_signing_key,
-};
+use auth::{generate_signing_key, public_key_base64};
+use config::{ClientProfile, sanitize_profile_name, write_profile, write_signing_key};
 
 #[derive(Parser)]
 #[command(name = "railyard")]
@@ -21,10 +19,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Redeem an invite blob (`ryd-invite-v1.…`) and save a profile for the
+    /// server it points at.
     Login {
-        ssh_target: String,
-        #[arg(long)]
-        name: Option<String>,
+        blob: String,
         #[arg(long)]
         profile: Option<String>,
     },
@@ -53,11 +51,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Login {
-            ssh_target,
-            name,
-            profile,
-        } => login(ssh_target, name, profile),
+        Commands::Login { blob, profile } => login(&blob, profile),
         Commands::Services { command } => match command {
             ServicesCommand::List { profile } => {
                 let services = http::list_services(&profile)?;
@@ -68,55 +62,34 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn login(
-    ssh_target: String,
-    device_name: Option<String>,
-    profile_name: Option<String>,
-) -> Result<(), Box<dyn Error>> {
-    let device_name = device_name.unwrap_or_else(default_device_name);
-    let device_name = device_name.replace(' ', "-");
-    let profile_name = profile_name.unwrap_or_else(|| "default".to_string());
-    let profile_name = sanitize_profile_name(&profile_name);
-    let signing_key = generate_signing_key();
-    let public_key = public_key_base64(&signing_key);
-    let remote_command = format!(
-        "railyard-server auth register-key --name {} --public-key {}",
-        shell_escape(&device_name),
-        shell_escape(&public_key)
-    );
-
-    let output = Command::new("ssh")
-        .arg(&ssh_target)
-        .arg(remote_command)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ssh bootstrap failed: {stderr}").into());
+fn login(blob: &str, profile_name: Option<String>) -> Result<(), Box<dyn Error>> {
+    let invite = InvitePayload::parse(blob)?;
+    if invite.expires_at <= unix_timestamp() {
+        return Err("this invite has expired; ask for a new one".into());
     }
 
-    let bootstrap: BootstrapResponse = serde_json::from_slice(&output.stdout)?;
-    let key_path = write_signing_key(&bootstrap.key_id, &signing_key)?;
+    let profile_name = sanitize_profile_name(&profile_name.unwrap_or_else(|| "default".into()));
+    if profile_name.is_empty() {
+        return Err("profile name has no usable characters".into());
+    }
+
+    let signing_key = generate_signing_key();
+    let redeemed = http::redeem_invite(&invite, &public_key_base64(&signing_key))?;
+    let key_path = write_signing_key(&redeemed.key_id, &signing_key)?;
 
     write_profile(
         &profile_name,
         &ClientProfile {
-            server_url: bootstrap.server_url.clone(),
-            ssh_target,
-            key_id: bootstrap.key_id.clone(),
-            device_name: bootstrap.device_name.clone(),
+            server_url: invite.server_url.clone(),
+            key_id: redeemed.key_id.clone(),
             private_key_path: key_path.display().to_string(),
         },
     )?;
 
     println!(
-        "Saved profile {} for {} ({})",
-        profile_name, bootstrap.device_name, bootstrap.server_url
+        "Logged in to {} (key {}, profile {})",
+        invite.server_url, redeemed.key_id, profile_name
     );
 
     Ok(())
-}
-
-fn shell_escape(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

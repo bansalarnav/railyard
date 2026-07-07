@@ -1,6 +1,7 @@
 use railyard_auth::{
     HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION,
-    HEADER_TIMESTAMP, SIGNATURE_VERSION,
+    HEADER_TIMESTAMP, InvitePayload, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
+    SIGNATURE_VERSION,
 };
 use reqwest::Url;
 use reqwest::blocking::Client;
@@ -9,6 +10,30 @@ use std::error::Error;
 
 use crate::auth::sign_request;
 use crate::config::{read_profile, read_signing_key};
+
+pub(crate) fn redeem_invite(
+    invite: &InvitePayload,
+    public_key: &str,
+) -> Result<RedeemInviteResponse, Box<dyn Error>> {
+    let base_url = Url::parse(&invite.server_url)?;
+    let redeem_url = control_plane_api_url(base_url, REDEEM_INVITE_PATH)?;
+
+    let response = Client::new()
+        .post(redeem_url)
+        .json(&RedeemInviteRequest {
+            invite_token: invite.invite_token.clone(),
+            public_key: public_key.to_string(),
+        })
+        .send()?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(format!("invite redemption failed ({status}): {body}").into());
+    }
+
+    Ok(response.json()?)
+}
 
 pub(crate) fn list_services(profile_name: &str) -> Result<Value, Box<dyn Error>> {
     let profile = read_profile(profile_name)?;

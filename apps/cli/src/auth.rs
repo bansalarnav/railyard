@@ -4,15 +4,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use railyard_auth::{canonical_request, unix_timestamp};
 use rand::RngCore;
 use rand::rngs::OsRng;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct BootstrapResponse {
-    pub(crate) key_id: String,
-    pub(crate) device_name: String,
-    pub(crate) server_url: String,
-}
 
 pub(crate) struct SignedRequestHeaders {
     pub(crate) key_id: String,

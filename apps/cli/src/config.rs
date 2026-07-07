@@ -10,9 +10,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ClientProfile {
     pub(crate) server_url: String,
-    pub(crate) ssh_target: String,
     pub(crate) key_id: String,
-    pub(crate) device_name: String,
     pub(crate) private_key_path: String,
 }
 
@@ -23,7 +21,7 @@ struct StoredPrivateKey {
 }
 
 pub(crate) fn write_profile(profile_name: &str, profile: &ClientProfile) -> io::Result<PathBuf> {
-    let path = profile_path(profile_name);
+    let path = profile_path(profile_name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -34,12 +32,12 @@ pub(crate) fn write_profile(profile_name: &str, profile: &ClientProfile) -> io::
 }
 
 pub(crate) fn read_profile(profile_name: &str) -> io::Result<ClientProfile> {
-    let raw = fs::read_to_string(profile_path(profile_name))?;
+    let raw = fs::read_to_string(profile_path(profile_name)?)?;
     serde_json::from_str(&raw).map_err(invalid_data)
 }
 
 pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::Result<PathBuf> {
-    let path = key_path(key_id);
+    let path = key_path(key_id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -69,17 +67,6 @@ pub(crate) fn read_signing_key(path: &str) -> io::Result<SigningKey> {
     Ok(SigningKey::from_bytes(&secret_key))
 }
 
-pub(crate) fn default_device_name() -> String {
-    std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|output| output.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "railyard-device".to_string())
-}
-
 pub(crate) fn sanitize_profile_name(raw: &str) -> String {
     let sanitized: String = raw
         .chars()
@@ -95,27 +82,38 @@ pub(crate) fn sanitize_profile_name(raw: &str) -> String {
     sanitized.trim_matches('-').to_string()
 }
 
-fn profile_path(profile_name: &str) -> PathBuf {
-    config_root()
+fn profile_path(profile_name: &str) -> io::Result<PathBuf> {
+    Ok(config_root()?
         .join("client")
         .join("profiles")
-        .join(format!("{profile_name}.json"))
+        .join(format!("{profile_name}.json")))
 }
 
-fn key_path(key_id: &str) -> PathBuf {
-    config_root()
+fn key_path(key_id: &str) -> io::Result<PathBuf> {
+    Ok(config_root()?
         .join("client")
         .join("keys")
-        .join(format!("{key_id}.json"))
+        .join(format!("{key_id}.json")))
 }
 
-fn config_root() -> PathBuf {
-    if let Ok(path) = env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(path).join("railyard");
+fn config_root() -> io::Result<PathBuf> {
+    if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
+        return Ok(PathBuf::from(path).join("railyard"));
     }
 
-    let home = env::var("HOME").expect("HOME must be set when XDG_CONFIG_HOME is unset");
-    Path::new(&home).join(".config").join("railyard")
+    if let Some(home) = env::var_os("HOME") {
+        return Ok(Path::new(&home).join(".config").join("railyard"));
+    }
+
+    // Windows has no HOME; APPDATA is the conventional per-user config root.
+    if let Some(appdata) = env::var_os("APPDATA") {
+        return Ok(PathBuf::from(appdata).join("railyard"));
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "could not locate a config directory: set XDG_CONFIG_HOME, HOME, or APPDATA",
+    ))
 }
 
 fn invalid_data(error: impl std::fmt::Display) -> io::Error {
