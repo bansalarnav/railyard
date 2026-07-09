@@ -60,9 +60,25 @@ project_id?}` at `~/.config/railyard/client/profiles/<name>.json`, written by `l
 [auth](auth.md), a person with three projects on two VPSes simply has three profiles; an admin
 of a VPS has one admin profile for that whole server.
 
-Default profile names come from the invite payload: the project name for project-scoped
-invites, the server hostname for admin invites — so `railyard login <blob>` needs no flags
-and `--profile` is only for overriding collisions.
+Profile names are derived from the invite payload, never prompted for in the common path:
+the project name for project-scoped invites, the **server name** for admin invites. Since
+`server_url` is realistically a bare IP, the server carries a human name and embeds it in
+every invite it mints: set with `railyard server setup --name hetzner` (or later via server
+config), defaulting to the box's OS hostname — which providers set to something at least
+mnemonic. Only if that also yields nothing usable does `login` prompt for a name.
+
+There is no magic `default` profile — a name like `default` carries no information the day a
+second server shows up, and the "I only have one profile" case is already handled by
+resolution, not by a special name. `railyard login <blob>` therefore needs no flags, first
+time or fifth.
+
+When the derived name is already taken:
+
+- **Same server, same user** — this is a re-login (new device key for the same identity).
+  Update the profile in place with the new `key_id`; no prompt.
+- **Anything else** (different user on that server, or an unrelated server that derives the
+  same name) — prompt for a name, pre-filled with a suggestion like `hetzner-2`;
+  non-interactive runs must pass `--profile <name>`.
 
 ### Resolution
 
@@ -88,8 +104,9 @@ Three entry points, one mechanism (the invite blob from [auth](auth.md)):
 - **`railyard server setup <user@host>`** — day-zero bootstrap. SSHes to the box, installs the
   `railyard-server` binary (detect arch, download release, systemd unit), runs
   `railyard-server up`, then mints an admin invite and redeems it locally. One command from
-  fresh VPS to logged-in admin. Flags: `--version`, `--no-install` (server already present,
-  just log in).
+  fresh VPS to logged-in admin. Flags: `--name hetzner` (the server's human name, embedded in
+  every invite it mints; defaults to the box's hostname), `--version`, `--no-install` (server
+  already present, just log in).
 - **`railyard login <blob>`** — the normal path for everyone who isn't the machine admin:
   paste the blob a teammate sent you. Generates the keypair, redeems, writes the profile.
 - **`railyard login <user@host>`** — sugar for admins with SSH access: runs
@@ -106,6 +123,15 @@ thing to run when a command hits a 403.
 `.railyard.json` (compose conversion or Dockerfile scan per [manifest](manifest.md)), writes
 `project.id`, and records the profile binding. If the file already has a `project.id`, `init`
 refuses and points at `link`.
+
+`init` is also where a server gets **chosen** rather than inferred — there is no `project.id`
+yet, so profile resolution has nothing to match on. Candidates are the profiles that can
+create projects (admin profiles). Exactly one → use it, printing the target
+(`Creating project acme on hetzner (https://…)`), so a single-VPS user never thinks about
+this. Several → interactive picker listing profile name + server URL; non-interactive runs
+must pass `--profile`. The choice is then durable: the `project.id` written to the manifest
+plus the recorded binding pin every subsequent command (`up`, `logs`, `user add`, …) to that
+server, so two projects on two VPSes coexist with no per-command flags.
 
 `railyard link` is the inverse for cloning an already-deployed repo on a new machine, or
 adopting a server project into an existing file: pick the project (arg or interactive list),
