@@ -9,6 +9,9 @@ pub const REDEEM_INVITE_PATH: &str = "/auth/redeem-invite";
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InvitePayload {
     pub server_url: String,
+    /// Human name of the server (its hostname unless overridden), used by the
+    /// client to derive a profile name since `server_url` is often a bare IP.
+    pub server_name: String,
     pub invite_token: String,
     pub expires_at: u64,
 }
@@ -51,3 +54,23 @@ impl fmt::Display for InviteParseError {
 }
 
 impl std::error::Error for InviteParseError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrips() {
+        let blob = InvitePayload {
+            server_url: "http://65.108.12.34:3000".into(),
+            server_name: "hetzner".into(),
+            invite_token: "tok".into(),
+            expires_at: 123,
+        }
+        .encode();
+
+        let parsed = InvitePayload::parse(&blob).unwrap();
+        assert_eq!(parsed.server_name, "hetzner");
+        assert_eq!(parsed.server_url, "http://65.108.12.34:3000");
+    }
+}

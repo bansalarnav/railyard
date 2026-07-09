@@ -49,7 +49,7 @@ fn configured_service_upstreams() -> io::Result<BTreeMap<String, SocketAddr>> {
         .collect()
 }
 
-fn parsed_env<T: FromStr>(name: &str, default: T, expected: &str) -> io::Result<T> {
+pub(crate) fn parsed_env<T: FromStr>(name: &str, default: T, expected: &str) -> io::Result<T> {
     match env::var(name) {
         Ok(value) => value
             .parse()
