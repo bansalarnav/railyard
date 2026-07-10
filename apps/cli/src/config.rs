@@ -76,13 +76,13 @@ struct GlobalConfig {
     projects: BTreeMap<String, String>,
 }
 
+pub(crate) fn read_project_binding(project_id: &str) -> io::Result<Option<String>> {
+    Ok(read_global_config()?.projects.get(project_id).cloned())
+}
+
 pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> io::Result<()> {
-    let path = config_root()?.join("client").join("config.json");
-    let mut config: GlobalConfig = match fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).map_err(invalid_data)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => GlobalConfig::default(),
-        Err(error) => return Err(error),
-    };
+    let path = global_config_path()?;
+    let mut config = read_global_config()?;
 
     config
         .projects
@@ -95,6 +95,18 @@ pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> io:
         &path,
         serde_json::to_string_pretty(&config).map_err(invalid_data)?,
     )
+}
+
+fn read_global_config() -> io::Result<GlobalConfig> {
+    match fs::read_to_string(global_config_path()?) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(invalid_data),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(GlobalConfig::default()),
+        Err(error) => Err(error),
+    }
+}
+
+fn global_config_path() -> io::Result<PathBuf> {
+    Ok(config_root()?.join("client").join("config.json"))
 }
 
 pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::Result<PathBuf> {

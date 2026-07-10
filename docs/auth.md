@@ -31,7 +31,7 @@ ryd-invite-v1.<base64url JSON>
 ```
 
 The JSON payload is self-describing: `server_url`, `server_name` (the server's human name —
-`SERVER_NAME` env or the box's hostname — since `server_url` is often a bare IP),
+`RAILYARD_SERVER_NAME` env or the box's hostname — since `server_url` is often a bare IP),
 `invite_token`, `expires_at`, and for project-scoped invites the project id and name. The
 client derives the profile name from these: project name, else server name, else the URL
 host. Properties:
@@ -47,7 +47,9 @@ token, binds the key to the invited user, marks the invite used, and returns the
 
 ## CLI lifecycle
 
-On the server (requires SSH to the box — only an admin of the machine mints admins):
+On the server (requires SSH to the box — only an admin of the machine mints admins).
+`user add` talks to the running daemon over a local admin socket (0600, so only the box's
+user reaches it), so both CLIs mint invites through the same API path:
 
 ```
 railyard-server user add alice              # create admin user, print invite blob
@@ -61,16 +63,16 @@ railyard-server auth revoke-key <key_id>    # revoke one device, keep the user
 On the client:
 
 ```
-railyard auth add <blob>                    # generate keypair, redeem invite, write profile
-railyard project add-user bob               # create a user scoped to the current project
+railyard login <blob>                       # generate keypair, redeem invite, write server entry
+railyard user add bob                       # create a user scoped to the current project
                                             #   (from .railyard.json project.id), print blob
+railyard user add bob --server hetzner      # create a server-wide admin on that server, print blob
 railyard login <ssh_target>                 # bootstrap sugar: runs `user add` over SSH and
                                             #   redeems the blob in one step
 ```
 
-`railyard project add-user` may be run by an admin or by any user scoped to that same
-project. This is safe: the new user gets exactly the inviter's scope, never more, so a
-project member inviting a teammate cannot escalate anything.
+Creating an invite of any kind — project-scoped or server-wide — requires an **admin**;
+the server rejects invite requests signed by a project-scoped key.
 
 ## Request signing
 

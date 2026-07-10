@@ -1,8 +1,8 @@
 use railyard_auth::{
-    CreateProjectRequest, HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE,
-    HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP, InvitePayload, ListProjectsResponse,
-    PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
-    SIGNATURE_VERSION,
+    CreateProjectRequest, CreateUserRequest, CreateUserResponse, HEADER_CONTENT_SHA256,
+    HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP,
+    InvitePayload, ListProjectsResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH,
+    RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION, USERS_PATH,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::{Method, Url};
@@ -62,6 +62,26 @@ pub(crate) fn create_project(
         let status = response.status();
         let body = response.text().unwrap_or_default();
         return Err(format!("project creation failed ({status}): {body}").into());
+    }
+
+    Ok(response.json()?)
+}
+
+pub(crate) fn create_user(
+    server: &ServerConfig,
+    name: &str,
+    project_id: Option<&str>,
+) -> Result<CreateUserResponse, Box<dyn Error>> {
+    let body = serde_json::to_vec(&CreateUserRequest {
+        name: name.to_string(),
+        project_id: project_id.map(ToOwned::to_owned),
+    })?;
+    let response = signed_request(server, Method::POST, USERS_PATH, body)?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(format!("user creation failed ({status}): {body}").into());
     }
 
     Ok(response.json()?)

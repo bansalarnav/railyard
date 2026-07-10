@@ -3,12 +3,13 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::{Json, Router, middleware, routing::get};
+use axum::{Extension, Json, Router, middleware, routing::get};
 use pingora::server::ShutdownWatch;
 use pingora::services::ServiceReadyNotifier;
 use pingora::services::background::BackgroundService;
 use railyard_auth::{
-    CreateProjectRequest, ListProjectsResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH,
+    CreateProjectRequest, CreateUserRequest, CreateUserResponse, InviteProject,
+    ListProjectsResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH, USERS_PATH,
     unix_timestamp,
 };
 use serde::Serialize;
@@ -18,7 +19,8 @@ use std::sync::{Arc, Mutex};
 
 use super::auth::{redeem_invite, verify_signature};
 use super::state::{ApiState, AppState};
-use crate::db::{Db, Project};
+use crate::db::{AuthUser, Db, Project};
+use crate::invite::mint_invite;
 
 pub(crate) struct ApiService {
     pub(crate) state: AppState,
@@ -41,7 +43,7 @@ struct ServicesResponse {
 impl BackgroundService for ApiService {
     async fn start_with_ready_notifier(
         &self,
-        mut shutdown: ShutdownWatch,
+        shutdown: ShutdownWatch,
         ready_notifier: ServiceReadyNotifier,
     ) {
         let db = Db::open().await.expect("failed to open auth database");
@@ -58,16 +60,50 @@ impl BackgroundService for ApiService {
         let listener = tokio::net::TcpListener::bind(self.state.api_addr)
             .await
             .expect("failed to bind internal API listener");
+        let admin_listener = bind_admin_socket();
 
         ready_notifier.notify_ready();
 
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = shutdown.changed().await;
-            })
-            .await
-            .expect("API service exited with error");
+        let mut tcp_shutdown = shutdown.clone();
+        let tcp = axum::serve(listener, app).with_graceful_shutdown(async move {
+            let _ = tcp_shutdown.changed().await;
+        });
+        let mut admin_shutdown = shutdown.clone();
+        let admin = axum::serve(admin_listener, admin_routes(&state)).with_graceful_shutdown(
+            async move {
+                let _ = admin_shutdown.changed().await;
+            },
+        );
+
+        let (tcp, admin) = tokio::join!(tcp, admin);
+        tcp.expect("API service exited with error");
+        admin.expect("admin socket service exited with error");
     }
+}
+
+/// The local admin API: the server CLI's line to the daemon. Only the
+/// machine's admin can reach the socket (0600), so requests skip signature
+/// verification and act as an admin user.
+fn bind_admin_socket() -> tokio::net::UnixListener {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = crate::paths::admin_sock_path();
+    let _ = std::fs::remove_file(&path);
+    let listener =
+        tokio::net::UnixListener::bind(&path).expect("failed to bind admin socket listener");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .expect("failed to restrict admin socket permissions");
+    listener
+}
+
+fn admin_routes(state: &ApiState) -> Router {
+    Router::new()
+        .route(USERS_PATH, post(create_user))
+        .layer(Extension(AuthUser {
+            id: "local".to_string(),
+            project_id: None,
+        }))
+        .with_state(state.clone())
 }
 
 fn api_routes(state: &ApiState) -> Router<ApiState> {
@@ -75,6 +111,7 @@ fn api_routes(state: &ApiState) -> Router<ApiState> {
         .route("/", get(root))
         .route("/api/services", get(list_services))
         .route(PROJECTS_PATH, get(list_projects).post(create_project))
+        .route(USERS_PATH, post(create_user))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signature,
@@ -136,6 +173,71 @@ async fn create_project(
         }
         Err(error) => {
             log::error!("project creation failed: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Create a user (project-scoped, or a server-wide admin when `project_id`
+/// is absent) and mint its invite blob. Only admins may invite — a
+/// project-scoped inviter gets a 403 regardless of the requested scope.
+async fn create_user(
+    State(state): State<ApiState>,
+    Extension(inviter): Extension<AuthUser>,
+    Json(request): Json<CreateUserRequest>,
+) -> Response {
+    if inviter.project_id.is_some() {
+        return (
+            StatusCode::FORBIDDEN,
+            "only server admins can create users and invites",
+        )
+            .into_response();
+    }
+
+    let project = match &request.project_id {
+        None => None,
+        Some(id) => match state.db.project_by_id(id).await {
+            Ok(Some(project)) => Some(InviteProject {
+                id: project.id,
+                name: project.name,
+            }),
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!("no project {id} on this server"),
+                )
+                    .into_response();
+            }
+            Err(error) => {
+                log::error!("project lookup failed: {error}");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        },
+    };
+
+    match mint_invite(&state.db, &request.name, project).await {
+        Ok(minted) => {
+            log::info!(
+                "admin {} created user {} ({})",
+                inviter.id,
+                request.name,
+                minted.user_id
+            );
+            Json(CreateUserResponse {
+                user_id: minted.user_id,
+                invite_blob: minted.blob,
+                expires_at: minted.expires_at,
+            })
+            .into_response()
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            (StatusCode::CONFLICT, error.to_string()).into_response()
+        }
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
+            (StatusCode::BAD_REQUEST, error.to_string()).into_response()
+        }
+        Err(error) => {
+            log::error!("user creation failed: {error}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }

@@ -69,7 +69,7 @@ pub(crate) async fn verify_signature(
 }
 
 async fn checked_request(state: &ApiState, request: Request) -> Result<Request, String> {
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
 
     let header = |name: &str| -> Result<&str, String> {
         parts
@@ -111,9 +111,9 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         }
     }
 
-    let public_key = state
+    let (public_key, user) = state
         .db
-        .public_key_for(key_id)
+        .key_owner(key_id)
         .await
         .map_err(|error| {
             log::error!("key lookup failed: {error}");
@@ -157,6 +157,7 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .verify(canonical.as_bytes(), &Signature::from_bytes(&signature))
         .map_err(|_| "signature verification failed".to_string())?;
 
+    parts.extensions.insert(user);
     Ok(Request::from_parts(parts, Body::from(body_bytes)))
 }
 

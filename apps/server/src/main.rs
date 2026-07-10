@@ -1,6 +1,7 @@
 mod cli;
 mod db;
 mod http;
+mod invite;
 mod paths;
 
 fn main() {

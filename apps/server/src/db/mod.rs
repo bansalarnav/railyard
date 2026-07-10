@@ -4,6 +4,7 @@ mod user;
 
 pub(crate) use invite::token_hash;
 pub(crate) use project::Project;
+pub(crate) use user::AuthUser;
 
 use libsql::{Builder, Connection, Value};
 use std::io;
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     public_key TEXT,
+    project_id TEXT,
     created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS invites (
@@ -56,6 +58,25 @@ impl Db {
             .map_err(db_error)?;
         conn.execute_batch(SCHEMA).await.map_err(db_error)?;
 
+        // Databases created before project scoping lack users.project_id.
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'project_id'",
+                (),
+            )
+            .await
+            .map_err(db_error)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| io::Error::other("pragma_table_info returned no rows"))?;
+        if integer_column(&row, 0)? == 0 {
+            conn.execute("ALTER TABLE users ADD COLUMN project_id TEXT", ())
+                .await
+                .map_err(db_error)?;
+        }
+
         Ok(Self { conn })
     }
 }
@@ -65,6 +86,16 @@ fn text_column(row: &libsql::Row, index: i32) -> io::Result<String> {
         Value::Text(value) => Ok(value),
         other => Err(io::Error::other(format!(
             "expected text in column {index}, got {other:?}"
+        ))),
+    }
+}
+
+fn optional_text_column(row: &libsql::Row, index: i32) -> io::Result<Option<String>> {
+    match row.get_value(index).map_err(db_error)? {
+        Value::Text(value) => Ok(Some(value)),
+        Value::Null => Ok(None),
+        other => Err(io::Error::other(format!(
+            "expected text or null in column {index}, got {other:?}"
         ))),
     }
 }

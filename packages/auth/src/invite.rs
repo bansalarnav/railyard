@@ -12,8 +12,18 @@ pub struct InvitePayload {
     /// Human name of the server (its hostname unless overridden), used by the
     /// client to derive a profile name since `server_url` is often a bare IP.
     pub server_name: String,
+    /// Present on project-scoped invites; the client prefers the project name
+    /// when deriving a local name for the redeemed identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<InviteProject>,
     pub invite_token: String,
     pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InviteProject {
+    pub id: String,
+    pub name: String,
 }
 
 impl InvitePayload {
@@ -64,6 +74,7 @@ mod tests {
         let blob = InvitePayload {
             server_url: "http://65.108.12.34:3000".into(),
             server_name: "hetzner".into(),
+            project: None,
             invite_token: "tok".into(),
             expires_at: 123,
         }

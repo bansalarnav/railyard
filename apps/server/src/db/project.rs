@@ -56,6 +56,26 @@ impl Db {
         Ok(projects)
     }
 
+    pub(crate) async fn project_by_id(&self, id: &str) -> io::Result<Option<Project>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, name, created_at FROM projects WHERE id = ?1",
+                params![id],
+            )
+            .await
+            .map_err(db_error)?;
+
+        match rows.next().await.map_err(db_error)? {
+            Some(row) => Ok(Some(Project {
+                id: text_column(&row, 0)?,
+                name: text_column(&row, 1)?,
+                created_at: integer_column(&row, 2)? as u64,
+            })),
+            None => Ok(None),
+        }
+    }
+
     async fn project_id_by_name(&self, name: &str) -> io::Result<Option<String>> {
         let mut rows = self
             .conn

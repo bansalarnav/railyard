@@ -1,11 +1,13 @@
 mod invite;
 mod project;
+mod user;
 
 pub use invite::{
-    INVITE_BLOB_PREFIX, InviteParseError, InvitePayload, REDEEM_INVITE_PATH, RedeemInviteRequest,
-    RedeemInviteResponse,
+    INVITE_BLOB_PREFIX, InviteParseError, InvitePayload, InviteProject, REDEEM_INVITE_PATH,
+    RedeemInviteRequest, RedeemInviteResponse,
 };
 pub use project::{CreateProjectRequest, ListProjectsResponse, PROJECTS_PATH, ProjectSummary};
+pub use user::{CreateUserRequest, CreateUserResponse, USERS_PATH};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

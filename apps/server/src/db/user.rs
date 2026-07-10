@@ -1,17 +1,32 @@
 use libsql::{Value, params};
 use std::io;
 
-use super::{Db, db_error, integer_column, text_column};
+use super::{Db, db_error, integer_column, optional_text_column, text_column};
 
 pub(crate) struct User {
     pub(crate) id: String,
     pub(crate) name: String,
+    pub(crate) project_id: Option<String>,
     pub(crate) has_key: bool,
     pub(crate) created_at: u64,
 }
 
+/// The user a verified request key belongs to; the auth middleware attaches
+/// this to the request so handlers can authorize against it. `project_id` of
+/// `None` means a server-wide admin.
+#[derive(Clone)]
+pub(crate) struct AuthUser {
+    pub(crate) id: String,
+    pub(crate) project_id: Option<String>,
+}
+
 impl Db {
-    pub(crate) async fn create_user(&self, name: &str, now: u64) -> io::Result<String> {
+    pub(crate) async fn create_user(
+        &self,
+        name: &str,
+        project_id: Option<&str>,
+        now: u64,
+    ) -> io::Result<String> {
         if self.user_id_by_name(name).await?.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -19,11 +34,15 @@ impl Db {
             ));
         }
 
+        let project_id = match project_id {
+            Some(id) => Value::Text(id.to_string()),
+            None => Value::Null,
+        };
         let user_id = new_user_id();
         self.conn
             .execute(
-                "INSERT INTO users (id, name, created_at) VALUES (?1, ?2, ?3)",
-                (user_id.as_str(), name, now as i64),
+                "INSERT INTO users (id, name, project_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+                (user_id.as_str(), name, project_id, now as i64),
             )
             .await
             .map_err(db_error)?;
@@ -35,7 +54,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, name, public_key, created_at FROM users ORDER BY created_at, name",
+                "SELECT id, name, project_id, public_key, created_at FROM users ORDER BY created_at, name",
                 (),
             )
             .await
@@ -46,8 +65,9 @@ impl Db {
             users.push(User {
                 id: text_column(&row, 0)?,
                 name: text_column(&row, 1)?,
-                has_key: !matches!(row.get_value(2).map_err(db_error)?, Value::Null),
-                created_at: integer_column(&row, 3)? as u64,
+                project_id: optional_text_column(&row, 2)?,
+                has_key: !matches!(row.get_value(3).map_err(db_error)?, Value::Null),
+                created_at: integer_column(&row, 4)? as u64,
             });
         }
 
@@ -72,18 +92,27 @@ impl Db {
 
         Ok(true)
     }
-    pub(crate) async fn public_key_for(&self, key_id: &str) -> io::Result<Option<String>> {
+    /// Resolve a request's key to the public key that must verify it and the
+    /// user it belongs to. A key id is a user id today (one key per user).
+    pub(crate) async fn key_owner(&self, key_id: &str) -> io::Result<Option<(String, AuthUser)>> {
         let mut rows = self
             .conn
             .query(
-                "SELECT public_key FROM users WHERE id = ?1 AND public_key IS NOT NULL",
+                "SELECT public_key, id, project_id FROM users
+                 WHERE id = ?1 AND public_key IS NOT NULL",
                 params![key_id],
             )
             .await
             .map_err(db_error)?;
 
         match rows.next().await.map_err(db_error)? {
-            Some(row) => Ok(Some(text_column(&row, 0)?)),
+            Some(row) => Ok(Some((
+                text_column(&row, 0)?,
+                AuthUser {
+                    id: text_column(&row, 1)?,
+                    project_id: optional_text_column(&row, 2)?,
+                },
+            ))),
             None => Ok(None),
         }
     }

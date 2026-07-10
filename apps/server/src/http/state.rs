@@ -23,10 +23,12 @@ pub(crate) struct ApiState {
 
 impl AppState {
     pub(crate) fn load() -> io::Result<Self> {
-        let proxy_host: IpAddr = parsed_env("PROXY_HOST", [127, 0, 0, 1].into(), "an IP address")?;
-        let proxy_port: u16 = parsed_env("PROXY_PORT", 3000, "a port number")?;
-        let api_host: IpAddr = parsed_env("API_HOST", [127, 0, 0, 1].into(), "an IP address")?;
-        let api_port: u16 = parsed_env("API_PORT", 3001, "a port number")?;
+        let proxy_host: IpAddr =
+            parsed_env("RAILYARD_PROXY_HOST", [127, 0, 0, 1].into(), "an IP address")?;
+        let proxy_port: u16 = parsed_env("RAILYARD_PROXY_PORT", 3000, "a port number")?;
+        let api_host: IpAddr =
+            parsed_env("RAILYARD_API_HOST", [127, 0, 0, 1].into(), "an IP address")?;
+        let api_port: u16 = parsed_env("RAILYARD_API_PORT", 3001, "a port number")?;
 
         Ok(Self {
             proxy_addr: SocketAddr::from((proxy_host, proxy_port)),
@@ -36,11 +38,13 @@ impl AppState {
     }
 }
 
+const UPSTREAM_ENV_PREFIX: &str = "RAILYARD_CONTAINER_UPSTREAM_";
+
 fn configured_service_upstreams() -> io::Result<BTreeMap<String, SocketAddr>> {
     env::vars()
-        .filter(|(key, _)| key.starts_with("CONTAINER_UPSTREAM_"))
+        .filter(|(key, _)| key.starts_with(UPSTREAM_ENV_PREFIX))
         .map(|(key, value)| {
-            let service = env_key_to_service_name(&key["CONTAINER_UPSTREAM_".len()..]);
+            let service = env_key_to_service_name(&key[UPSTREAM_ENV_PREFIX.len()..]);
             let upstream = value
                 .parse()
                 .map_err(|_| invalid_env(&key, &value, "a socket address"))?;

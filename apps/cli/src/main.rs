@@ -13,8 +13,8 @@ use std::{env, fs, io};
 
 use auth::{generate_signing_key, public_key_base64};
 use config::{
-    ServerConfig, list_servers, read_server, record_project_binding, sanitize_server_name,
-    write_server, write_signing_key,
+    ServerConfig, list_servers, read_project_binding, read_server, record_project_binding,
+    sanitize_server_name, write_server, write_signing_key,
 };
 
 const MANIFEST_FILE: &str = ".railyard.json";
@@ -45,6 +45,21 @@ enum Commands {
     Services {
         #[command(subcommand)]
         command: ServicesCommand,
+    },
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UserCommand {
+    /// Invite a user to the current project and print the invite blob
+    Add {
+        name: String,
+        /// Invite to this entire server (admin) instead of the current project
+        #[arg(long)]
+        server: Option<String>,
     },
 }
 
@@ -77,7 +92,89 @@ fn run() -> Result<(), Box<dyn Error>> {
                 Ok(())
             }
         },
+        Commands::User { command } => match command {
+            UserCommand::Add { name, server } => user_add(&name, server),
+        },
     }
+}
+
+/// Without --server, invite to the project this directory is linked to; the
+/// flag switches to a server-wide (admin) invite on the named server. Either
+/// way the server only honors the request from an admin key.
+fn user_add(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+    if let Some(server_name) = server_flag {
+        let server = read_server(&server_name)
+            .map_err(|error| format!("could not read server {server_name}: {error}"))?;
+        let created = http::create_user(&server, name, None)?;
+        println!("Created admin user {name} with access to all of {server_name}.");
+        print_invite(&created.invite_blob);
+        return Ok(());
+    }
+
+    let project = current_project()?;
+    let (server_name, server) = resolve_project_server(&project.id)?;
+    let created = http::create_user(&server, name, Some(&project.id))?;
+    println!(
+        "Created user {name} scoped to project {} on {server_name}.",
+        project.name
+    );
+    print_invite(&created.invite_blob);
+    Ok(())
+}
+
+fn print_invite(blob: &str) {
+    println!("Single-use invite, expires in 24h. Redeem with `railyard login <blob>`:");
+    println!();
+    println!("{blob}");
+}
+
+struct LinkedProject {
+    id: String,
+    name: String,
+}
+
+/// The project this directory is linked to: `.railyard.json` must exist and
+/// carry a `project.id` (both written by `railyard init`).
+fn current_project() -> Result<LinkedProject, Box<dyn Error>> {
+    let raw = match fs::read_to_string(MANIFEST_FILE) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(format!(
+                "no {MANIFEST_FILE} in this directory; run `railyard init` first, \
+                 or pass --server <name> to invite someone to a whole server"
+            )
+            .into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let manifest = railyard_manifest::parse(&raw)?;
+    let project = manifest.project.ok_or(format!(
+        "{MANIFEST_FILE} has no project; run `railyard init` first"
+    ))?;
+    let id = project.id.ok_or(format!(
+        "{MANIFEST_FILE} names project {} but has no project.id; run `railyard init` first",
+        project.name
+    ))?;
+
+    Ok(LinkedProject {
+        id,
+        name: project.name,
+    })
+}
+
+/// The server recorded for a linked project by `railyard init`. Project
+/// commands never guess a server; without a binding the fix is to run
+/// `railyard init` on this machine.
+fn resolve_project_server(project_id: &str) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    let Some(name) = read_project_binding(project_id)? else {
+        return Err(
+            "this project is not linked to a server on this machine; run `railyard init`".into(),
+        );
+    };
+    let server =
+        read_server(&name).map_err(|error| format!("could not read server {name}: {error}"))?;
+    Ok((name, server))
 }
 
 fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
@@ -89,7 +186,7 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
     };
 
     let project_name = resolve_project_name(name, &manifest)?;
-    let (server_name, server) = resolve_server(server_flag)?;
+    let (server_name, server) = resolve_server_for_init(server_flag)?;
 
     // A manifest can arrive with a project.id already in it — most commonly a
     // cloned repo that someone else deployed. If the chosen server knows that
@@ -181,11 +278,10 @@ fn sanitize_project_name(raw: &str) -> String {
     name.trim_matches('-').to_string()
 }
 
-/// `--server` flag, then `RAILYARD_SERVER`, then the sole known server.
-/// With several servers and no selection, prompt on a TTY, else error —
-/// this is where a server gets chosen when there is no project binding yet.
+/// `--server` flag, then the sole known server. Never prompts — commands
+/// other than `init` must be told which server when several exist.
 fn resolve_server(explicit: Option<String>) -> Result<(String, ServerConfig), Box<dyn Error>> {
-    if let Some(name) = explicit.or_else(|| env::var("RAILYARD_SERVER").ok()) {
+    if let Some(name) = explicit {
         let server =
             read_server(&name).map_err(|error| format!("could not read server {name}: {error}"))?;
         return Ok((name, server));
@@ -195,20 +291,25 @@ fn resolve_server(explicit: Option<String>) -> Result<(String, ServerConfig), Bo
     match servers.len() {
         0 => Err("no servers found; run `railyard login <blob>` first".into()),
         1 => Ok(servers.remove(0)),
-        _ => pick_server(servers),
+        _ => {
+            let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
+            Err(format!(
+                "multiple servers exist ({}); pass --server <name>",
+                names.join(", ")
+            )
+            .into())
+        }
     }
 }
 
-fn pick_server(
-    mut servers: Vec<(String, ServerConfig)>,
+/// `init` is where a server gets chosen for a project, so it alone may
+/// prompt: with several servers and no `--server`, show a picker on a TTY.
+fn resolve_server_for_init(
+    explicit: Option<String>,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
-    if !io::stdin().is_terminal() {
-        let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
-        return Err(format!(
-            "multiple servers exist ({}); pass --server <name>",
-            names.join(", ")
-        )
-        .into());
+    let mut servers = list_servers()?;
+    if explicit.is_some() || servers.len() < 2 || !io::stdin().is_terminal() {
+        return resolve_server(explicit);
     }
 
     let items: Vec<String> = servers
@@ -265,8 +366,10 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Explicit --name wins; otherwise derive from the invite: the server's
-/// human name, falling back to the host of `server_url`.
+/// Explicit --name wins; otherwise derive from the invite: the project name
+/// for project-scoped invites (so a project identity does not collide with
+/// an admin entry for the same server), then the server's human name, then
+/// the host of `server_url`.
 fn resolve_server_name(
     explicit: Option<String>,
     invite: &InvitePayload,
@@ -277,6 +380,13 @@ fn resolve_server_name(
             return Err("server name has no usable characters".into());
         }
         return Ok(name);
+    }
+
+    if let Some(project) = &invite.project {
+        let name = sanitize_server_name(&project.name);
+        if !name.is_empty() {
+            return Ok(name);
+        }
     }
 
     let name = sanitize_server_name(&invite.server_name);

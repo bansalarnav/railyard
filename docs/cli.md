@@ -38,7 +38,7 @@ railyard open [<service>]            # open the public URL in a browser
 railyard secrets set KEY=VALUE …     # (--env staging)
 railyard secrets unset KEY
 railyard secrets list                # names + updated-at, never values
-railyard user add <name> [--project] # create user, print invite blob
+railyard user add <name> [--server <name>] # invite to the current project; --server invites a server-wide admin
 railyard user remove <name>
 railyard user list
 railyard github link [owner/repo]    # webhook + deploy key + write github block
@@ -83,18 +83,17 @@ When the derived name is already taken:
 
 Project commands (`up`, `logs`, `status`, …) pick a server in this order:
 
-1. `--server <name>` flag, then `RAILYARD_SERVER` env var.
+1. `--server <name>` flag.
 2. The recorded binding for this project: global `config.json` keeps a `projects` map of
-   `prj_… → server name`, written by `init`, `link`, or the first successful match.
-3. Scan all server entries against `project.id` from the manifest. A server that knows the
-   project is a candidate. One
-   candidate → use it and record the binding. Multiple → prompt (error with the list when not
-   a TTY).
+   `prj_… → server name`, written by `init` (and `link`). No binding → error pointing at
+   `railyard init`; project commands never guess a server.
 
-Commands with no project context (`user add` from outside a repo, `whoami`) use steps 1–2,
-then fall back to "the only server" if exactly one exists, else prompt. Nothing about server
-selection is ever written into `.railyard.json` — the file is committed and shared; identity
-is per-machine.
+Only `init` ever prompts — it is where a server gets chosen, so with several servers and no
+`--server` it shows an interactive picker (error with the list when not a TTY). Everything
+else, including commands with no project context (`whoami`, `services list`), accepts
+`--server` or falls back to "the only server" if exactly one exists, else errors. Nothing
+about server selection is ever written into `.railyard.json` — the file is committed and
+shared; identity is per-machine.
 
 ## Getting connected
 
@@ -122,8 +121,8 @@ thing to run when a command hits a 403.
 `.railyard.json` (compose conversion or Dockerfile scan per [manifest](manifest.md)), writes
 `project.id`, and records the server binding.
 
-`init` is also where a server gets **chosen**. `--server <name>` wins, followed by
-`RAILYARD_SERVER`. With exactly one known server, use it and print the target
+`init` is also where a server gets **chosen**. `--server <name>` wins. With exactly one
+known server, use it and print the target
 (`Creating project acme on hetzner (https://…)`), so a single-VPS user never thinks about
 this. With several servers, show an interactive terminal picker listing server name + URL;
 non-interactive runs must pass `--server`. The choice is then durable: the `project.id`
@@ -175,11 +174,11 @@ Client-side user management is the thin authenticated wrapper over the server's 
 same data as `railyard-server user …` but over the API, so admins don't need SSH for routine
 invites:
 
-- `railyard user add <name>` — run by an admin: creates an **admin** user unless `--project`
-  is given. Run inside a project directory with a project-scoped server entry: creates a user scoped
-  to *that* project (the server enforces that scoped users can only ever mint their own
-  scope, per [auth](auth.md) — this subsumes the `project add-user` command sketched there).
-  Prints the invite blob.
+- `railyard user add <name>` — creates a user scoped to the **current project** (from
+  `.railyard.json` `project.id`; error when the directory has no linked project) and prints
+  the invite blob. `--server <name>` skips the project and creates a **server-wide admin**
+  on that server instead. Either way the server only honors the request from an admin key —
+  project-scoped users cannot mint invites (see [auth](auth.md)).
 - `railyard user remove <name>` / `railyard user list` — scoped to what the server entry can see:
   admins see everyone on the server, project users see their project's users.
 
