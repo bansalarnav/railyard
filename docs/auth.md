@@ -48,8 +48,9 @@ token, binds the key to the invited user, marks the invite used, and returns the
 ## CLI lifecycle
 
 On the server (requires SSH to the box — only an admin of the machine mints admins).
-`user add` talks to the running daemon over a local admin socket (0600, so only the box's
-user reaches it), so both CLIs mint invites through the same API path:
+User commands talk to the running daemon over a local admin socket (0600, so only the box's
+user reaches it): both CLIs manage users through the same API, and only the daemon's
+process ever opens the database.
 
 ```
 railyard-server user add alice              # create admin user, print invite blob

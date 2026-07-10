@@ -16,3 +16,20 @@ pub struct CreateUserResponse {
     pub invite_blob: String,
     pub expires_at: u64,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserSummary {
+    pub id: String,
+    pub name: String,
+    /// Absent for server-wide admins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// False until the user's invite is redeemed.
+    pub has_key: bool,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListUsersResponse {
+    pub users: Vec<UserSummary>,
+}

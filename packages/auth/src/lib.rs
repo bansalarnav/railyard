@@ -7,7 +7,9 @@ pub use invite::{
     RedeemInviteRequest, RedeemInviteResponse,
 };
 pub use project::{CreateProjectRequest, ListProjectsResponse, PROJECTS_PATH, ProjectSummary};
-pub use user::{CreateUserRequest, CreateUserResponse, USERS_PATH};
+pub use user::{
+    CreateUserRequest, CreateUserResponse, ListUsersResponse, USERS_PATH, UserSummary,
+};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

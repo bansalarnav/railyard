@@ -1,16 +1,16 @@
 use async_trait::async_trait;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{delete, post};
 use axum::{Extension, Json, Router, middleware, routing::get};
 use pingora::server::ShutdownWatch;
 use pingora::services::ServiceReadyNotifier;
 use pingora::services::background::BackgroundService;
 use railyard_auth::{
     CreateProjectRequest, CreateUserRequest, CreateUserResponse, InviteProject,
-    ListProjectsResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH, USERS_PATH,
-    unix_timestamp,
+    ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH,
+    USERS_PATH, UserSummary, unix_timestamp,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -96,9 +96,10 @@ fn bind_admin_socket() -> tokio::net::UnixListener {
     listener
 }
 
+/// Requests on the admin socket act as an admin user without signatures;
+/// the socket's file permissions are the trust boundary.
 fn admin_routes(state: &ApiState) -> Router {
-    Router::new()
-        .route(USERS_PATH, post(create_user))
+    protected_routes()
         .layer(Extension(AuthUser {
             id: "local".to_string(),
             project_id: None,
@@ -107,16 +108,24 @@ fn admin_routes(state: &ApiState) -> Router {
 }
 
 fn api_routes(state: &ApiState) -> Router<ApiState> {
-    let protected = Router::new()
-        .route("/", get(root))
-        .route("/api/services", get(list_services))
-        .route(PROJECTS_PATH, get(list_projects).post(create_project))
-        .route(USERS_PATH, post(create_user))
+    protected_routes()
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signature,
-        ));
-    protected.route(REDEEM_INVITE_PATH, post(redeem_invite))
+        ))
+        .route(REDEEM_INVITE_PATH, post(redeem_invite))
+}
+
+/// Every authenticated route, shared by the signed TCP listener and the
+/// local admin socket. Handlers see the caller as an `AuthUser` extension,
+/// inserted by the signature middleware or the admin socket respectively.
+fn protected_routes() -> Router<ApiState> {
+    Router::new()
+        .route("/", get(root))
+        .route("/api/services", get(list_services))
+        .route(PROJECTS_PATH, get(list_projects).post(create_project))
+        .route(USERS_PATH, get(list_users).post(create_user))
+        .route(&format!("{USERS_PATH}/{{name}}"), delete(remove_user))
 }
 
 async fn root(State(state): State<ApiState>) -> String {
@@ -238,6 +247,57 @@ async fn create_user(
         }
         Err(error) => {
             log::error!("user creation failed: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn list_users(
+    State(state): State<ApiState>,
+    Extension(caller): Extension<AuthUser>,
+) -> Response {
+    if caller.project_id.is_some() {
+        return (StatusCode::FORBIDDEN, "only server admins can list users").into_response();
+    }
+
+    match state.db.list_users().await {
+        Ok(users) => Json(ListUsersResponse {
+            users: users
+                .into_iter()
+                .map(|user| UserSummary {
+                    id: user.id,
+                    name: user.name,
+                    project_id: user.project_id,
+                    has_key: user.has_key,
+                    created_at: user.created_at,
+                })
+                .collect(),
+        })
+        .into_response(),
+        Err(error) => {
+            log::error!("user listing failed: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn remove_user(
+    State(state): State<ApiState>,
+    Extension(caller): Extension<AuthUser>,
+    Path(name): Path<String>,
+) -> Response {
+    if caller.project_id.is_some() {
+        return (StatusCode::FORBIDDEN, "only server admins can remove users").into_response();
+    }
+
+    match state.db.remove_user(&name).await {
+        Ok(true) => {
+            log::info!("admin {} removed user {name}", caller.id);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => (StatusCode::NOT_FOUND, format!("no user named {name}")).into_response(),
+        Err(error) => {
+            log::error!("user removal failed: {error}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
