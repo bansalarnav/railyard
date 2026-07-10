@@ -1,7 +1,8 @@
 use railyard_auth::{
     CreateProjectRequest, HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE,
-    HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP, InvitePayload, PROJECTS_PATH, ProjectSummary,
-    REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION,
+    HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP, InvitePayload, ListProjectsResponse,
+    PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
+    SIGNATURE_VERSION,
 };
 use reqwest::blocking::{Client, Response};
 use reqwest::{Method, Url};
@@ -9,7 +10,7 @@ use serde_json::Value;
 use std::error::Error;
 
 use crate::auth::sign_request;
-use crate::config::{ClientProfile, read_signing_key};
+use crate::config::{ServerConfig, read_signing_key};
 
 pub(crate) fn redeem_invite(
     invite: &InvitePayload,
@@ -35,20 +36,27 @@ pub(crate) fn redeem_invite(
     Ok(response.json()?)
 }
 
-pub(crate) fn list_services(profile: &ClientProfile) -> Result<Value, Box<dyn Error>> {
+pub(crate) fn list_services(server: &ServerConfig) -> Result<Value, Box<dyn Error>> {
     let response =
-        signed_request(profile, Method::GET, "api/services", Vec::new())?.error_for_status()?;
+        signed_request(server, Method::GET, "api/services", Vec::new())?.error_for_status()?;
     Ok(response.json()?)
 }
 
+pub(crate) fn list_projects(server: &ServerConfig) -> Result<Vec<ProjectSummary>, Box<dyn Error>> {
+    let response =
+        signed_request(server, Method::GET, PROJECTS_PATH, Vec::new())?.error_for_status()?;
+    let listed: ListProjectsResponse = response.json()?;
+    Ok(listed.projects)
+}
+
 pub(crate) fn create_project(
-    profile: &ClientProfile,
+    server: &ServerConfig,
     name: &str,
 ) -> Result<ProjectSummary, Box<dyn Error>> {
     let body = serde_json::to_vec(&CreateProjectRequest {
         name: name.to_string(),
     })?;
-    let response = signed_request(profile, Method::POST, PROJECTS_PATH, body)?;
+    let response = signed_request(server, Method::POST, PROJECTS_PATH, body)?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -60,13 +68,13 @@ pub(crate) fn create_project(
 }
 
 fn signed_request(
-    profile: &ClientProfile,
+    server: &ServerConfig,
     method: Method,
     suffix: &str,
     body: Vec<u8>,
 ) -> Result<Response, Box<dyn Error>> {
-    let signing_key = read_signing_key(&profile.private_key_path)?;
-    let server_url = Url::parse(&profile.server_url)?;
+    let signing_key = read_signing_key(&server.private_key_path)?;
+    let server_url = Url::parse(&server.server_url)?;
     let request_url = control_plane_api_url(server_url, suffix)?;
     let path_and_query = request_url[url::Position::BeforePath..].to_string();
     let host = request_url
@@ -79,7 +87,7 @@ fn signed_request(
     };
     let signed = sign_request(
         &signing_key,
-        &profile.key_id,
+        &server.key_id,
         method.as_str(),
         &path_and_query,
         &host,

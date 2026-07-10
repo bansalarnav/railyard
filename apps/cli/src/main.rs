@@ -3,17 +3,18 @@ mod config;
 mod http;
 
 use clap::{Parser, Subcommand};
+use dialoguer::{Select, theme::ColorfulTheme};
 use railyard_auth::{InvitePayload, unix_timestamp};
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::{env, fs, io};
 
 use auth::{generate_signing_key, public_key_base64};
 use config::{
-    ClientProfile, list_profiles, read_profile, record_project_binding, sanitize_profile_name,
-    write_profile, write_signing_key,
+    ServerConfig, list_servers, read_server, record_project_binding, sanitize_server_name,
+    write_server, write_signing_key,
 };
 
 const MANIFEST_FILE: &str = ".railyard.json";
@@ -30,15 +31,16 @@ struct Cli {
 enum Commands {
     Login {
         blob: String,
+        /// Local name for this server; defaults to the name embedded in the invite
         #[arg(long)]
-        profile: Option<String>,
+        name: Option<String>,
     },
     /// Create a project on a server and link this directory to it
     Init {
         /// Project name; defaults to the manifest's project name, then the directory name
         name: Option<String>,
         #[arg(long)]
-        profile: Option<String>,
+        server: Option<String>,
     },
     Services {
         #[command(subcommand)]
@@ -50,7 +52,7 @@ enum Commands {
 enum ServicesCommand {
     List {
         #[arg(long)]
-        profile: Option<String>,
+        server: Option<String>,
     },
 }
 
@@ -65,12 +67,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Login { blob, profile } => login(&blob, profile),
-        Commands::Init { name, profile } => init(name, profile),
+        Commands::Login { blob, name } => login(&blob, name),
+        Commands::Init { name, server } => init(name, server),
         Commands::Services { command } => match command {
-            ServicesCommand::List { profile } => {
-                let (_, profile) = resolve_profile(profile)?;
-                let services = http::list_services(&profile)?;
+            ServicesCommand::List { server } => {
+                let (_, server) = resolve_server(server)?;
+                let services = http::list_services(&server)?;
                 println!("{}", serde_json::to_string_pretty(&services)?);
                 Ok(())
             }
@@ -78,7 +80,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn init(name: Option<String>, profile_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     let manifest_path = Path::new(MANIFEST_FILE);
     let mut manifest = match fs::read_to_string(manifest_path) {
         Ok(raw) => railyard_manifest::parse(&raw)?,
@@ -86,25 +88,38 @@ fn init(name: Option<String>, profile_flag: Option<String>) -> Result<(), Box<dy
         Err(error) => return Err(error.into()),
     };
 
-    if let Some(id) = manifest.project.as_ref().and_then(|p| p.id.as_deref()) {
-        return Err(format!(
-            "{MANIFEST_FILE} is already linked to project {id}; remove project.id to re-init"
-        )
-        .into());
+    let project_name = resolve_project_name(name, &manifest)?;
+    let (server_name, server) = resolve_server(server_flag)?;
+
+    // A manifest can arrive with a project.id already in it — most commonly a
+    // cloned repo that someone else deployed. If the chosen server knows that
+    // project this is a no-op link; if not, mint a fresh project here and
+    // take over the id, leaving the original deployment untouched.
+    if let Some(id) = manifest.project.as_ref().and_then(|p| p.id.clone()) {
+        let projects = http::list_projects(&server)?;
+        if let Some(existing) = projects.into_iter().find(|project| project.id == id) {
+            record_project_binding(&id, &server_name)?;
+            println!(
+                "Project {} ({id}) already exists on {server_name}; linked this directory to it",
+                existing.name
+            );
+            return Ok(());
+        }
+        println!(
+            "{MANIFEST_FILE} points at project {id}, which {server_name} does not know — \
+             creating a fresh project there instead"
+        );
     }
 
-    let project_name = resolve_project_name(name, &manifest)?;
-    let (profile_name, profile) = resolve_profile(profile_flag)?;
-
     println!(
-        "Creating project {project_name} on {profile_name} ({})",
-        profile.server_url
+        "Creating project {project_name} on {server_name} ({})",
+        server.server_url
     );
-    let created = http::create_project(&profile, &project_name)?;
+    let created = http::create_project(&server, &project_name)?;
 
     manifest.link_project(&created.name, &created.id);
     fs::write(manifest_path, manifest.to_json_string())?;
-    record_project_binding(&created.id, &profile_name)?;
+    record_project_binding(&created.id, &server_name)?;
 
     println!(
         "Created project {} ({}) and linked {MANIFEST_FILE}",
@@ -166,71 +181,64 @@ fn sanitize_project_name(raw: &str) -> String {
     name.trim_matches('-').to_string()
 }
 
-/// `--profile` flag, then `RAILYARD_PROFILE`, then the sole existing profile.
-/// With several profiles and no selection, prompt on a TTY, else error —
+/// `--server` flag, then `RAILYARD_SERVER`, then the sole known server.
+/// With several servers and no selection, prompt on a TTY, else error —
 /// this is where a server gets chosen when there is no project binding yet.
-fn resolve_profile(explicit: Option<String>) -> Result<(String, ClientProfile), Box<dyn Error>> {
-    if let Some(name) = explicit.or_else(|| env::var("RAILYARD_PROFILE").ok()) {
-        let profile = read_profile(&name)
-            .map_err(|error| format!("could not read profile {name}: {error}"))?;
-        return Ok((name, profile));
+fn resolve_server(explicit: Option<String>) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    if let Some(name) = explicit.or_else(|| env::var("RAILYARD_SERVER").ok()) {
+        let server =
+            read_server(&name).map_err(|error| format!("could not read server {name}: {error}"))?;
+        return Ok((name, server));
     }
 
-    let mut profiles = list_profiles()?;
-    match profiles.len() {
-        0 => Err("no profiles found; run `railyard login <blob>` first".into()),
-        1 => Ok(profiles.remove(0)),
-        _ => pick_profile(profiles),
+    let mut servers = list_servers()?;
+    match servers.len() {
+        0 => Err("no servers found; run `railyard login <blob>` first".into()),
+        1 => Ok(servers.remove(0)),
+        _ => pick_server(servers),
     }
 }
 
-fn pick_profile(
-    mut profiles: Vec<(String, ClientProfile)>,
-) -> Result<(String, ClientProfile), Box<dyn Error>> {
+fn pick_server(
+    mut servers: Vec<(String, ServerConfig)>,
+) -> Result<(String, ServerConfig), Box<dyn Error>> {
     if !io::stdin().is_terminal() {
-        let names: Vec<String> = profiles.iter().map(|(name, _)| name.clone()).collect();
+        let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
         return Err(format!(
-            "multiple profiles exist ({}); pass --profile <name>",
+            "multiple servers exist ({}); pass --server <name>",
             names.join(", ")
         )
         .into());
     }
 
-    eprintln!("Multiple profiles:");
-    for (index, (name, profile)) in profiles.iter().enumerate() {
-        eprintln!("  {}. {name} ({})", index + 1, profile.server_url);
-    }
-    eprint!("Choose a profile [1-{}]: ", profiles.len());
-    io::stderr().flush()?;
+    let items: Vec<String> = servers
+        .iter()
+        .map(|(name, server)| format!("{name} ({})", server.server_url))
+        .collect();
+    let choice = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select a server")
+        .items(&items)
+        .default(0)
+        .interact()?;
 
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let choice: usize = input
-        .trim()
-        .parse()
-        .map_err(|_| "not a number; pass --profile <name> to skip the prompt")?;
-    if choice == 0 || choice > profiles.len() {
-        return Err(format!("pick a number between 1 and {}", profiles.len()).into());
-    }
-
-    Ok(profiles.remove(choice - 1))
+    Ok(servers.remove(choice))
 }
 
-fn login(blob: &str, profile_name: Option<String>) -> Result<(), Box<dyn Error>> {
+fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let invite = InvitePayload::parse(blob)?;
     if invite.expires_at <= unix_timestamp() {
         return Err("this invite has expired; ask for a new one".into());
     }
 
-    let profile_name = resolve_profile_name(profile_name, &invite)?;
+    let server_name = resolve_server_name(server_name, &invite)?;
 
     // Re-redeeming against the same server just rotates this machine's key;
-    // a different server squatting on the name needs an explicit --profile.
-    if let Ok(existing) = read_profile(&profile_name)
+    // a different server squatting on the name needs an explicit --name.
+    if let Ok(existing) = read_server(&server_name)
         && existing.server_url != invite.server_url
     {
         return Err(format!(
-            "profile {profile_name} already points at {}; pass --profile <name> to pick another name",
+            "server {server_name} already points at {}; pass --name <name> to pick another name",
             existing.server_url
         )
         .into());
@@ -240,9 +248,9 @@ fn login(blob: &str, profile_name: Option<String>) -> Result<(), Box<dyn Error>>
     let redeemed = http::redeem_invite(&invite, &public_key_base64(&signing_key))?;
     let key_path = write_signing_key(&redeemed.key_id, &signing_key)?;
 
-    write_profile(
-        &profile_name,
-        &ClientProfile {
+    write_server(
+        &server_name,
+        &ServerConfig {
             server_url: invite.server_url.clone(),
             key_id: redeemed.key_id.clone(),
             private_key_path: key_path.display().to_string(),
@@ -250,28 +258,28 @@ fn login(blob: &str, profile_name: Option<String>) -> Result<(), Box<dyn Error>>
     )?;
 
     println!(
-        "Logged in to {} (key {}, profile {})",
-        invite.server_url, redeemed.key_id, profile_name
+        "Logged in to {} (key {}, server {})",
+        invite.server_url, redeemed.key_id, server_name
     );
 
     Ok(())
 }
 
-/// Explicit --profile wins; otherwise derive from the invite: the server's
+/// Explicit --name wins; otherwise derive from the invite: the server's
 /// human name, falling back to the host of `server_url`.
-fn resolve_profile_name(
+fn resolve_server_name(
     explicit: Option<String>,
     invite: &InvitePayload,
 ) -> Result<String, Box<dyn Error>> {
     if let Some(raw) = explicit {
-        let name = sanitize_profile_name(&raw);
+        let name = sanitize_server_name(&raw);
         if name.is_empty() {
-            return Err("profile name has no usable characters".into());
+            return Err("server name has no usable characters".into());
         }
         return Ok(name);
     }
 
-    let name = sanitize_profile_name(&invite.server_name);
+    let name = sanitize_server_name(&invite.server_name);
     if !name.is_empty() {
         return Ok(name);
     }
@@ -279,11 +287,11 @@ fn resolve_profile_name(
     if let Ok(url) = url::Url::parse(&invite.server_url)
         && let Some(host) = url.host_str()
     {
-        let name = sanitize_profile_name(host);
+        let name = sanitize_server_name(host);
         if !name.is_empty() {
             return Ok(name);
         }
     }
 
-    Err("could not derive a profile name from this invite; pass --profile <name>".into())
+    Err("could not derive a server name from this invite; pass --name <name>".into())
 }

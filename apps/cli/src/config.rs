@@ -8,8 +8,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// One identity on one server: where it lives and the key that proves who
+/// we are to it. Stored at `client/servers/<name>.json`.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct ClientProfile {
+pub(crate) struct ServerConfig {
     pub(crate) server_url: String,
     pub(crate) key_id: String,
     pub(crate) private_key_path: String,
@@ -21,31 +23,31 @@ struct StoredPrivateKey {
     secret_key_base64: String,
 }
 
-pub(crate) fn write_profile(profile_name: &str, profile: &ClientProfile) -> io::Result<PathBuf> {
-    let path = profile_path(profile_name)?;
+pub(crate) fn write_server(server_name: &str, server: &ServerConfig) -> io::Result<PathBuf> {
+    let path = server_path(server_name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let raw = serde_json::to_string_pretty(profile).map_err(invalid_data)?;
+    let raw = serde_json::to_string_pretty(server).map_err(invalid_data)?;
     fs::write(&path, raw)?;
     Ok(path)
 }
 
-pub(crate) fn read_profile(profile_name: &str) -> io::Result<ClientProfile> {
-    let raw = fs::read_to_string(profile_path(profile_name)?)?;
+pub(crate) fn read_server(server_name: &str) -> io::Result<ServerConfig> {
+    let raw = fs::read_to_string(server_path(server_name)?)?;
     serde_json::from_str(&raw).map_err(invalid_data)
 }
 
-pub(crate) fn list_profiles() -> io::Result<Vec<(String, ClientProfile)>> {
-    let dir = config_root()?.join("client").join("profiles");
+pub(crate) fn list_servers() -> io::Result<Vec<(String, ServerConfig)>> {
+    let dir = config_root()?.join("client").join("servers");
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
 
-    let mut profiles = Vec::new();
+    let mut servers = Vec::new();
     for entry in entries {
         let path = entry?.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
@@ -56,17 +58,17 @@ pub(crate) fn list_profiles() -> io::Result<Vec<(String, ClientProfile)>> {
         };
 
         match serde_json::from_str(&fs::read_to_string(&path)?) {
-            Ok(profile) => profiles.push((name.to_string(), profile)),
-            Err(error) => eprintln!("warning: skipping unreadable profile {name}: {error}"),
+            Ok(server) => servers.push((name.to_string(), server)),
+            Err(error) => eprintln!("warning: skipping unreadable server {name}: {error}"),
         }
     }
 
-    profiles.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(profiles)
+    servers.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(servers)
 }
 
-/// Global client state that is not per-profile: the `projects` map records
-/// which profile each known project id was created or linked through, so
+/// Global client state that is not per-server: the `projects` map records
+/// which server each known project id was created or linked through, so
 /// later project commands pin to the same server without flags.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct GlobalConfig {
@@ -74,7 +76,7 @@ struct GlobalConfig {
     projects: BTreeMap<String, String>,
 }
 
-pub(crate) fn record_project_binding(project_id: &str, profile_name: &str) -> io::Result<()> {
+pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> io::Result<()> {
     let path = config_root()?.join("client").join("config.json");
     let mut config: GlobalConfig = match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).map_err(invalid_data)?,
@@ -84,7 +86,7 @@ pub(crate) fn record_project_binding(project_id: &str, profile_name: &str) -> io
 
     config
         .projects
-        .insert(project_id.to_string(), profile_name.to_string());
+        .insert(project_id.to_string(), server_name.to_string());
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -126,7 +128,7 @@ pub(crate) fn read_signing_key(path: &str) -> io::Result<SigningKey> {
     Ok(SigningKey::from_bytes(&secret_key))
 }
 
-pub(crate) fn sanitize_profile_name(raw: &str) -> String {
+pub(crate) fn sanitize_server_name(raw: &str) -> String {
     let sanitized: String = raw
         .chars()
         .map(|char| {
@@ -141,11 +143,11 @@ pub(crate) fn sanitize_profile_name(raw: &str) -> String {
     sanitized.trim_matches('-').to_string()
 }
 
-fn profile_path(profile_name: &str) -> io::Result<PathBuf> {
+fn server_path(server_name: &str) -> io::Result<PathBuf> {
     Ok(config_root()?
         .join("client")
-        .join("profiles")
-        .join(format!("{profile_name}.json")))
+        .join("servers")
+        .join(format!("{server_name}.json")))
 }
 
 fn key_path(key_id: &str) -> io::Result<PathBuf> {

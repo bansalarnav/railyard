@@ -7,20 +7,20 @@ The client CLI (`railyard`) is the only interface most users touch. Design rules
   The only server-side state managed imperatively is what deliberately *cannot* live in the
   file: secrets, users, and the GitHub wiring.
 - **Verbs at the top level, nouns as groups.** The daily loop (`init`, `up`, `logs`, `status`)
-  is one word, like Railway. Management surfaces (`user`, `secrets`, `profile`, `server`) are
+  is one word, like Railway. Management surfaces (`user`, `secrets`, `server`) are
   noun groups with `add`/`remove`/`list` subcommands.
-- **Every command that talks to a server resolves a profile** (see below). Identity is the
-  profile; the project is the manifest. The two are matched automatically and can always be
-  forced with `--profile`.
+- **Every command that talks to a server resolves a server entry** (see below). Identity is
+  the server entry; the project is the manifest. The two are matched automatically and can
+  always be forced with `--server`.
 - `--json` on read commands for scripting; human tables otherwise.
 
 ## Command tree
 
 ```
 # Getting connected
-railyard server setup <user@host>    # install railyard-server over SSH, start it, log in as admin
-railyard login <blob | user@host>    # redeem an invite blob (or mint+redeem over SSH)
-railyard logout [--profile <name>]
+railyard server setup <user@host> [--name <name>] # install server, start it, log in as admin
+railyard login <blob | user@host> [--name <name>] # redeem an invite (or mint+redeem over SSH)
+railyard logout [--server <name>]
 railyard whoami
 
 # Daily loop
@@ -44,57 +44,56 @@ railyard user list
 railyard github link [owner/repo]    # webhook + deploy key + write github block
 
 # Multi-server
-railyard profile list
-railyard profile rename <old> <new>
-railyard profile remove <name>
+railyard server list
+railyard server rename <old> <new>
+railyard server remove <name>
 
 # Misc
 railyard metrics [<service>]         # cpu / memory / restarts per service
 railyard completion <shell>
 ```
 
-## Profiles: the multi-VPS story
+## Servers: the multi-VPS story
 
-A **profile** is one identity on one server: `{server_url, key_id, private_key_path,
-project_id?}` at `~/.config/railyard/client/profiles/<name>.json`, written by `login`. Per
-[auth](auth.md), a person with three projects on two VPSes simply has three profiles; an admin
-of a VPS has one admin profile for that whole server.
+A **server entry** is the local connection and identity for one server:
+`{server_url, key_id, private_key_path}` at
+`~/.config/railyard/client/servers/<name>.json`, written by `login`. A person deploying to two
+VPSes has two server entries; project-to-server bindings are stored separately in the global
+client config.
 
-Profile names are derived from the invite payload, never prompted for in the common path:
-the project name for project-scoped invites, the **server name** for admin invites. Since
+Server names are derived from the invite payload, so the common path needs no flag. Since
 `server_url` is realistically a bare IP, the server carries a human name and embeds it in
 every invite it mints: set with `railyard server setup --name hetzner` (or later via server
-config), defaulting to the box's OS hostname — which providers set to something at least
-mnemonic. Only if that also yields nothing usable does `login` prompt for a name.
+config), defaulting to the box's OS hostname. If the invite has no usable name, `login` falls
+back to the URL host. `railyard login --name <name>` overrides the local name explicitly.
 
-There is no magic `default` profile — a name like `default` carries no information the day a
-second server shows up, and the "I only have one profile" case is already handled by
+There is no magic `default` server — a name like `default` carries no information the day a
+second server shows up, and the "I only have one server" case is already handled by
 resolution, not by a special name. `railyard login <blob>` therefore needs no flags, first
 time or fifth.
 
 When the derived name is already taken:
 
 - **Same server, same user** — this is a re-login (new device key for the same identity).
-  Update the profile in place with the new `key_id`; no prompt.
-- **Anything else** (different user on that server, or an unrelated server that derives the
-  same name) — prompt for a name, pre-filled with a suggestion like `hetzner-2`;
-  non-interactive runs must pass `--profile <name>`.
+  Update the server entry in place with the new `key_id`.
+- **A different server with the same derived name** — refuse to overwrite the existing entry;
+  pass `--name <name>` to choose another local name.
 
 ### Resolution
 
-Project commands (`up`, `logs`, `status`, …) pick a profile in this order:
+Project commands (`up`, `logs`, `status`, …) pick a server in this order:
 
-1. `--profile <name>` flag, then `RAILYARD_PROFILE` env var.
+1. `--server <name>` flag, then `RAILYARD_SERVER` env var.
 2. The recorded binding for this project: global `config.json` keeps a `projects` map of
-   `prj_… → profile name`, written by `init`, `link`, or the first successful match.
-3. Scan all profiles against `project.id` from the manifest: a profile scoped to exactly that
-   project wins; otherwise admin profiles whose server knows the project are candidates. One
+   `prj_… → server name`, written by `init`, `link`, or the first successful match.
+3. Scan all server entries against `project.id` from the manifest. A server that knows the
+   project is a candidate. One
    candidate → use it and record the binding. Multiple → prompt (error with the list when not
    a TTY).
 
 Commands with no project context (`user add` from outside a repo, `whoami`) use steps 1–2,
-then fall back to "the only profile" if exactly one exists, else prompt. Nothing about
-profiles is ever written into `.railyard.json` — the file is committed and shared; identity
+then fall back to "the only server" if exactly one exists, else prompt. Nothing about server
+selection is ever written into `.railyard.json` — the file is committed and shared; identity
 is per-machine.
 
 ## Getting connected
@@ -108,30 +107,36 @@ Three entry points, one mechanism (the invite blob from [auth](auth.md)):
   every invite it mints; defaults to the box's hostname), `--version`, `--no-install` (server
   already present, just log in).
 - **`railyard login <blob>`** — the normal path for everyone who isn't the machine admin:
-  paste the blob a teammate sent you. Generates the keypair, redeems, writes the profile.
+  paste the blob a teammate sent you. Generates the keypair, redeems, writes the server entry.
 - **`railyard login <user@host>`** — sugar for admins with SSH access: runs
   `railyard-server user add` remotely and redeems the result in one step, no blob copying.
   The argument is disambiguated by the `ryd-invite-v1.` prefix.
 
-`logout` deletes the profile and its private key locally and (best-effort) asks the server to
-revoke the key. `whoami` prints the active profile, server, user name, and scope — the first
+`logout` deletes the server entry and its private key locally and (best-effort) asks the
+server to revoke the key. `whoami` prints the active server, user name, and scope — the first
 thing to run when a command hits a 403.
 
 ## init, link, up
 
 `railyard init` creates the project on the server (`POST /projects`), scaffolds
 `.railyard.json` (compose conversion or Dockerfile scan per [manifest](manifest.md)), writes
-`project.id`, and records the profile binding. If the file already has a `project.id`, `init`
-refuses and points at `link`.
+`project.id`, and records the server binding.
 
-`init` is also where a server gets **chosen** rather than inferred — there is no `project.id`
-yet, so profile resolution has nothing to match on. Candidates are the profiles that can
-create projects (admin profiles). Exactly one → use it, printing the target
+`init` is also where a server gets **chosen**. `--server <name>` wins, followed by
+`RAILYARD_SERVER`. With exactly one known server, use it and print the target
 (`Creating project acme on hetzner (https://…)`), so a single-VPS user never thinks about
-this. Several → interactive picker listing profile name + server URL; non-interactive runs
-must pass `--profile`. The choice is then durable: the `project.id` written to the manifest
-plus the recorded binding pin every subsequent command (`up`, `logs`, `user add`, …) to that
-server, so two projects on two VPSes coexist with no per-command flags.
+this. With several servers, show an interactive terminal picker listing server name + URL;
+non-interactive runs must pass `--server`. The choice is then durable: the `project.id`
+written to the manifest plus the recorded binding pin every subsequent command (`up`, `logs`,
+`user add`, …) to that server, so two projects on two VPSes coexist with no per-command flags.
+
+An existing `project.id` may have come from cloning a public repository that somebody else
+already deployed. After choosing a server, `init` checks that server's projects:
+
+- If the selected server already knows the ID, `init` keeps the manifest unchanged and records
+  the local server binding.
+- If the selected server does not know the ID, `init` creates a fresh project there and replaces
+  the foreign ID in `.railyard.json`. The original deployment on the other server is untouched.
 
 `railyard link` is the inverse for cloning an already-deployed repo on a new machine, or
 adopting a server project into an existing file: pick the project (arg or interactive list),
@@ -143,8 +148,8 @@ write `project.id` if missing, record the binding.
   shortcut for `init`; plain error otherwise). This covers the "manifest exists but project
   doesn't" case explicitly rather than silently.
 - `project.id` present but unknown to the resolved server → hard error naming the server, and
-  a hint to check `--profile` or run `link`. Auto-creating here would silently fork a project
-  onto the wrong VPS.
+  a hint to check `--server` or run `init`. Auto-creating during `up` would silently fork a
+  project onto the wrong VPS.
 - Existing project → upload changed path-service snapshots, print the diff plan (create /
   update / no-op per service), stream the rollout. Removal of services requires `--prune`,
   `--dry-run` prints the plan and stops, positional `railyard up api worker` restricts the
@@ -171,11 +176,11 @@ same data as `railyard-server user …` but over the API, so admins don't need S
 invites:
 
 - `railyard user add <name>` — run by an admin: creates an **admin** user unless `--project`
-  is given. Run inside a project directory by a project-scoped profile: creates a user scoped
+  is given. Run inside a project directory with a project-scoped server entry: creates a user scoped
   to *that* project (the server enforces that scoped users can only ever mint their own
   scope, per [auth](auth.md) — this subsumes the `project add-user` command sketched there).
   Prints the invite blob.
-- `railyard user remove <name>` / `railyard user list` — scoped to what the profile can see:
+- `railyard user remove <name>` / `railyard user list` — scoped to what the server entry can see:
   admins see everyone on the server, project users see their project's users.
 
 Key revocation (lost laptop) stays server-side (`railyard-server auth revoke-key`) for v1;
