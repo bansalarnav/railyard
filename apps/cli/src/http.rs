@@ -1,15 +1,15 @@
 use railyard_auth::{
-    HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION,
-    HEADER_TIMESTAMP, InvitePayload, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
-    SIGNATURE_VERSION,
+    CreateProjectRequest, HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE,
+    HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP, InvitePayload, PROJECTS_PATH, ProjectSummary,
+    REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION,
 };
-use reqwest::Url;
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
+use reqwest::{Method, Url};
 use serde_json::Value;
 use std::error::Error;
 
 use crate::auth::sign_request;
-use crate::config::{read_profile, read_signing_key};
+use crate::config::{ClientProfile, read_signing_key};
 
 pub(crate) fn redeem_invite(
     invite: &InvitePayload,
@@ -35,42 +35,74 @@ pub(crate) fn redeem_invite(
     Ok(response.json()?)
 }
 
-pub(crate) fn list_services(profile_name: &str) -> Result<Value, Box<dyn Error>> {
-    let profile = read_profile(profile_name)?;
+pub(crate) fn list_services(profile: &ClientProfile) -> Result<Value, Box<dyn Error>> {
+    let response =
+        signed_request(profile, Method::GET, "api/services", Vec::new())?.error_for_status()?;
+    Ok(response.json()?)
+}
+
+pub(crate) fn create_project(
+    profile: &ClientProfile,
+    name: &str,
+) -> Result<ProjectSummary, Box<dyn Error>> {
+    let body = serde_json::to_vec(&CreateProjectRequest {
+        name: name.to_string(),
+    })?;
+    let response = signed_request(profile, Method::POST, PROJECTS_PATH, body)?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(format!("project creation failed ({status}): {body}").into());
+    }
+
+    Ok(response.json()?)
+}
+
+fn signed_request(
+    profile: &ClientProfile,
+    method: Method,
+    suffix: &str,
+    body: Vec<u8>,
+) -> Result<Response, Box<dyn Error>> {
     let signing_key = read_signing_key(&profile.private_key_path)?;
     let server_url = Url::parse(&profile.server_url)?;
-    let services_url = control_plane_api_url(server_url, "api/services")?;
-    let path_and_query = services_url[url::Position::BeforePath..].to_string();
-    let host = services_url
+    let request_url = control_plane_api_url(server_url, suffix)?;
+    let path_and_query = request_url[url::Position::BeforePath..].to_string();
+    let host = request_url
         .host_str()
         .ok_or("server URL is missing a host")?
         .to_string();
-    let host = match services_url.port() {
+    let host = match request_url.port() {
         Some(port) => format!("{host}:{port}"),
         None => host,
     };
     let signed = sign_request(
         &signing_key,
         &profile.key_id,
-        "GET",
+        method.as_str(),
         &path_and_query,
         &host,
-        b"",
+        &body,
     );
 
-    let response = Client::new()
-        .get(services_url)
+    let mut request = Client::new()
+        .request(method, request_url)
         .header("host", host)
         .header(HEADER_KEY_ID, signed.key_id)
         .header(HEADER_TIMESTAMP, signed.timestamp.to_string())
         .header(HEADER_NONCE, signed.nonce)
         .header(HEADER_CONTENT_SHA256, signed.content_sha256)
         .header(HEADER_SIGNATURE, signed.signature)
-        .header(HEADER_SIGNATURE_VERSION, SIGNATURE_VERSION)
-        .send()?
-        .error_for_status()?;
+        .header(HEADER_SIGNATURE_VERSION, SIGNATURE_VERSION);
 
-    Ok(response.json()?)
+    if !body.is_empty() {
+        request = request
+            .header("content-type", "application/json")
+            .body(body);
+    }
+
+    Ok(request.send()?)
 }
 
 fn control_plane_api_url(mut base_url: Url, suffix: &str) -> Result<Url, Box<dyn Error>> {

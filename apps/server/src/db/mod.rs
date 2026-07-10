@@ -1,7 +1,9 @@
 mod invite;
+mod project;
 mod user;
 
 pub(crate) use invite::token_hash;
+pub(crate) use project::Project;
 
 use libsql::{Builder, Connection, Value};
 use std::io;
@@ -21,6 +23,11 @@ CREATE TABLE IF NOT EXISTS invites (
     user_id TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
     redeemed_at INTEGER,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL
 );
 ";

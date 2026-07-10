@@ -2318,6 +2318,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "railyard-auth",
+ "railyard-manifest",
  "rand 0.8.5",
  "reqwest",
  "serde",

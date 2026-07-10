@@ -2,6 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
@@ -34,6 +35,64 @@ pub(crate) fn write_profile(profile_name: &str, profile: &ClientProfile) -> io::
 pub(crate) fn read_profile(profile_name: &str) -> io::Result<ClientProfile> {
     let raw = fs::read_to_string(profile_path(profile_name)?)?;
     serde_json::from_str(&raw).map_err(invalid_data)
+}
+
+pub(crate) fn list_profiles() -> io::Result<Vec<(String, ClientProfile)>> {
+    let dir = config_root()?.join("client").join("profiles");
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+
+    let mut profiles = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+
+        match serde_json::from_str(&fs::read_to_string(&path)?) {
+            Ok(profile) => profiles.push((name.to_string(), profile)),
+            Err(error) => eprintln!("warning: skipping unreadable profile {name}: {error}"),
+        }
+    }
+
+    profiles.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(profiles)
+}
+
+/// Global client state that is not per-profile: the `projects` map records
+/// which profile each known project id was created or linked through, so
+/// later project commands pin to the same server without flags.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct GlobalConfig {
+    #[serde(default)]
+    projects: BTreeMap<String, String>,
+}
+
+pub(crate) fn record_project_binding(project_id: &str, profile_name: &str) -> io::Result<()> {
+    let path = config_root()?.join("client").join("config.json");
+    let mut config: GlobalConfig = match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(invalid_data)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => GlobalConfig::default(),
+        Err(error) => return Err(error),
+    };
+
+    config
+        .projects
+        .insert(project_id.to_string(), profile_name.to_string());
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&config).map_err(invalid_data)?,
+    )
 }
 
 pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::Result<PathBuf> {

@@ -112,12 +112,10 @@ fn server_name() -> io::Result<String> {
     let name = match env::var("SERVER_NAME") {
         Ok(name) => name,
         Err(_) => {
-            let hostname = nix::unistd::gethostname()?.into_string().unwrap_or_default();
-            hostname
-                .split('.')
-                .next()
-                .unwrap_or_default()
-                .to_string()
+            let hostname = nix::unistd::gethostname()?
+                .into_string()
+                .unwrap_or_default();
+            hostname.split('.').next().unwrap_or_default().to_string()
         }
     };
 
