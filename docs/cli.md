@@ -85,8 +85,10 @@ Project commands (`up`, `logs`, `status`, …) pick a server in this order:
 
 1. `--server <name>` flag.
 2. The recorded binding for this project: global `config.json` keeps a `projects` map of
-   `prj_… → server name`, written by `init` (and `link`). No binding → error pointing at
-   `railyard init`; project commands never guess a server.
+   `prj_… → server name`, written by `init` (and `link`), and by `login` when redeeming a
+   project-scoped invite — the blob names the project, so an invited teammate is bound the
+   moment they log in. No binding → error pointing at `railyard init`; project commands
+   never guess a server.
 
 Only `init` ever prompts — it is where a server gets chosen, so with several servers and no
 `--server` it shows an interactive picker (error with the list when not a TTY). Everything

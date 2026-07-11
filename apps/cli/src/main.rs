@@ -550,6 +550,17 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
         invite.server_url, redeemed.key_id, server_name
     );
 
+    // A project-scoped invite says exactly which server owns the project, so
+    // record the binding now — a cloned repo naming that project id then
+    // resolves immediately, no `init`/`link` step.
+    if let Some(project) = &invite.project {
+        record_project_binding(&project.id, &server_name)?;
+        println!(
+            "Linked project {} ({}) to {server_name}",
+            project.name, project.id
+        );
+    }
+
     Ok(())
 }
 
