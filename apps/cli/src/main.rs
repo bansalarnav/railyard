@@ -3,7 +3,7 @@ mod config;
 mod http;
 
 use clap::{Parser, Subcommand};
-use dialoguer::{Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, WhoamiResponse, unix_timestamp};
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
@@ -146,11 +146,20 @@ fn whoami(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
         }
         (Some(name.clone()), format!("selected by --server {name}"))
     } else if let Some(project) = linked_project()? {
-        match resolve_project_server(&project.id) {
-            Ok((name, _)) => (
+        // Report-only: whoami never prompts, so it checks the binding rather
+        // than resolving (which may offer to link).
+        match bound_project_server(&project.id) {
+            Ok(Some((name, _))) => (
                 Some(name),
                 format!(
                     "selected for this directory (project {}, {})",
+                    project.name, project.id
+                ),
+            ),
+            Ok(None) => (
+                None,
+                format!(
+                    "project {} ({}) is not linked here yet",
                     project.name, project.id
                 ),
             ),
@@ -214,7 +223,7 @@ fn user_add(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error
         "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
          `railyard init` first, or pass --server <name> to invite someone to a whole server"
     ))?;
-    let (server_name, server) = resolve_project_server(&project.id)?;
+    let (server_name, server) = resolve_project_server(&project)?;
     let created = http::create_user(&server, name, Some(&project.id))?;
     println!(
         "Created user {name} scoped to project {} on {server_name}.",
@@ -296,18 +305,117 @@ fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
     }))
 }
 
-/// The server recorded for a linked project by `railyard init`. Project
-/// commands never guess a server; without a binding the fix is to run
-/// `railyard init` on this machine.
-fn resolve_project_server(project_id: &str) -> Result<(String, ServerConfig), Box<dyn Error>> {
+/// The server for a linked project: the recorded binding, or — when none
+/// exists yet — an offer to link a server that already has the project.
+fn resolve_project_server(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    if let Some(bound) = bound_project_server(&project.id)? {
+        return Ok(bound);
+    }
+    offer_project_link(project)
+}
+
+/// The binding recorded by `init` or a project-scoped `login`, if any.
+fn bound_project_server(
+    project_id: &str,
+) -> Result<Option<(String, ServerConfig)>, Box<dyn Error>> {
     let Some(name) = read_project_binding(project_id)? else {
-        return Err(
-            "this project is not linked to a server on this machine; run `railyard init`".into(),
-        );
+        return Ok(None);
     };
     let server =
         read_server(&name).map_err(|error| format!("could not read server {name}: {error}"))?;
+    Ok(Some((name, server)))
+}
+
+/// No binding yet: quietly look for the project on every server this machine
+/// could act on — admin identities, or one scoped to this very project — and
+/// offer to link the match. This is why there is no `link` command.
+fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    let mut candidates: Vec<(String, ServerConfig)> = list_servers()?
+        .into_iter()
+        .filter(|(_, server)| server_has_project(server, project))
+        .collect();
+
+    match candidates.len() {
+        0 => Err(format!(
+            "this project is not linked to a server on this machine, and none of your servers \
+             have project {} ({}); run `railyard init` to create it",
+            project.name, project.id
+        )
+        .into()),
+        1 => {
+            let (name, server) = candidates.remove(0);
+            if !io::stdin().is_terminal() {
+                return Err(format!(
+                    "found project {} ({}) on server {name}, but this directory is not linked \
+                     to it; rerun interactively to link",
+                    project.name, project.id
+                )
+                .into());
+            }
+            let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Found project {} on server {name}. Would you like to link it?",
+                    project.name
+                ))
+                .default(true)
+                .interact()?;
+            if !confirmed {
+                return Err("this project is not linked to a server on this machine".into());
+            }
+            link_project(project, name, server)
+        }
+        _ => {
+            let names: Vec<String> = candidates.iter().map(|(name, _)| name.clone()).collect();
+            if !io::stdin().is_terminal() {
+                return Err(format!(
+                    "project {} ({}) exists on several servers ({}); rerun interactively to \
+                     choose one to link",
+                    project.name,
+                    project.id,
+                    names.join(", ")
+                )
+                .into());
+            }
+            let items: Vec<String> = candidates
+                .iter()
+                .map(|(name, server)| format!("{name} ({})", server.server_url))
+                .collect();
+            let choice = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Project {} exists on several servers; link which one?",
+                    project.name
+                ))
+                .items(&items)
+                .default(0)
+                .interact()?;
+            let (name, server) = candidates.remove(choice);
+            link_project(project, name, server)
+        }
+    }
+}
+
+fn link_project(
+    project: &LinkedProject,
+    name: String,
+    server: ServerConfig,
+) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    record_project_binding(&project.id, &name)?;
+    println!("Linked project {} ({}) to {name}", project.name, project.id);
     Ok((name, server))
+}
+
+/// Could this identity act on the project, and does its server have it?
+/// Unreachable servers and rejected keys simply aren't candidates.
+fn server_has_project(server: &ServerConfig, project: &LinkedProject) -> bool {
+    match http::whoami(server) {
+        Ok(http::WhoamiOutcome::Identity(identity)) => match identity.project_id {
+            Some(scoped) => scoped == project.id,
+            None => http::list_projects(server)
+                .map(|projects| projects.iter().any(|p| p.id == project.id))
+                .unwrap_or(false),
+        },
+        _ => false,
+    }
 }
 
 fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
@@ -321,31 +429,40 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
     let project_name = resolve_project_name(name, &manifest)?;
     let (server_name, server) = resolve_server_for_init(server_flag)?;
 
-    // A manifest can arrive with a project.id already in it — most commonly a
-    // cloned repo that someone else deployed. If the chosen server knows that
-    // project this is a no-op link; if not, mint a fresh project here and
-    // take over the id, leaving the original deployment untouched.
-    if let Some(id) = manifest.project.as_ref().and_then(|p| p.id.clone()) {
+    // A manifest can arrive with a project.id already in it — a cloned repo
+    // someone else deployed, or a project being brought to a second server.
+    // If the chosen server already has that project there is nothing to
+    // create; otherwise create it there under the *same* id, so the manifest
+    // keeps identifying every deployment of this project at once.
+    let existing_id = manifest.project.as_ref().and_then(|p| p.id.clone());
+    if let Some(id) = &existing_id {
         let projects = http::list_projects(&server)?;
-        if let Some(existing) = projects.into_iter().find(|project| project.id == id) {
-            record_project_binding(&id, &server_name)?;
-            println!(
-                "Project {} ({id}) already exists on {server_name}; linked this directory to it",
-                existing.name
-            );
-            return Ok(());
+        if projects.into_iter().any(|project| project.id == *id) {
+            let linked_here = read_project_binding(id)?.as_deref() == Some(server_name.as_str());
+            return Err(if linked_here {
+                format!(
+                    "project {project_name} ({id}) already exists on {server_name} and this \
+                     directory is linked to it; nothing to do"
+                )
+            } else {
+                format!(
+                    "project {project_name} ({id}) already exists on {server_name}; nothing \
+                     to create"
+                )
+            }
+            .into());
         }
         println!(
-            "{MANIFEST_FILE} points at project {id}, which {server_name} does not know — \
-             creating a fresh project there instead"
+            "Creating project {project_name} on {server_name} ({}) with existing id {id}",
+            server.server_url
+        );
+    } else {
+        println!(
+            "Creating project {project_name} on {server_name} ({})",
+            server.server_url
         );
     }
-
-    println!(
-        "Creating project {project_name} on {server_name} ({})",
-        server.server_url
-    );
-    let created = http::create_project(&server, &project_name)?;
+    let created = http::create_project(&server, &project_name, existing_id.as_deref())?;
 
     manifest.link_project(&created.name, &created.id);
     fs::write(manifest_path, manifest.to_json_string())?;
@@ -518,6 +635,23 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
         return Err("this invite has expired; ask for a new one".into());
     }
 
+    // A project invite for a server where an existing identity already
+    // covers that project (admin, or scoped to it, with a key that still
+    // works) adds nothing — record the binding and leave the invite alone.
+    // A dead key falls through to redemption, which is how a lost device
+    // gets replaced.
+    if let Some(project) = &invite.project
+        && let Some((entry_name, identity)) = existing_access(&invite.server_url, &project.id)?
+    {
+        record_project_binding(&project.id, &entry_name)?;
+        println!(
+            "Already have access to project {} on {} as user {} (server {entry_name}); \
+             linked the project — invite left unredeemed",
+            project.name, invite.server_url, identity.name
+        );
+        return Ok(());
+    }
+
     let server_name = resolve_server_name(server_name, &invite)?;
 
     // Re-redeeming against the same server just rotates this machine's key;
@@ -562,6 +696,26 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
     }
 
     Ok(())
+}
+
+/// An existing identity on `server_url` whose live-checked scope covers
+/// `project_id`: an admin, or a user scoped to that same project.
+fn existing_access(
+    server_url: &str,
+    project_id: &str,
+) -> Result<Option<(String, WhoamiResponse)>, Box<dyn Error>> {
+    for (name, server) in list_servers()? {
+        if server.server_url != server_url {
+            continue;
+        }
+        if let Ok(http::WhoamiOutcome::Identity(identity)) = http::whoami(&server)
+            && (identity.project_id.is_none()
+                || identity.project_id.as_deref() == Some(project_id))
+        {
+            return Ok(Some((name, identity)));
+        }
+    }
+    Ok(None)
 }
 
 /// Explicit --name wins; otherwise derive from the invite: the project name

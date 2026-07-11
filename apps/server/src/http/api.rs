@@ -169,7 +169,14 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-async fn list_services(State(state): State<ApiState>) -> Json<ServicesResponse> {
+async fn list_services(
+    State(state): State<ApiState>,
+    Extension(caller): Extension<AuthUser>,
+) -> Response {
+    if caller.project_id.is_some() {
+        return (StatusCode::FORBIDDEN, "only server admins can list services").into_response();
+    }
+
     let services = state
         .app
         .service_upstreams
@@ -185,12 +192,17 @@ async fn list_services(State(state): State<ApiState>) -> Json<ServicesResponse> 
         api_addr: state.app.api_addr.to_string(),
         services,
     })
+    .into_response()
 }
 
 async fn create_project(
     State(state): State<ApiState>,
+    Extension(caller): Extension<AuthUser>,
     Json(request): Json<CreateProjectRequest>,
 ) -> Response {
+    if caller.project_id.is_some() {
+        return (StatusCode::FORBIDDEN, "only server admins can create projects").into_response();
+    }
     if !is_valid_project_name(&request.name) {
         return (
             StatusCode::BAD_REQUEST,
@@ -198,10 +210,19 @@ async fn create_project(
         )
             .into_response();
     }
+    if let Some(id) = &request.id
+        && !is_valid_project_id(id)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "project id must look like prj_<16 hex chars>",
+        )
+            .into_response();
+    }
 
     match state
         .db
-        .create_project(&request.name, unix_timestamp())
+        .create_project(&request.name, request.id.as_deref(), unix_timestamp())
         .await
     {
         Ok(project) => Json(project_summary(project)).into_response(),
@@ -331,10 +352,21 @@ async fn remove_user(
     }
 }
 
-async fn list_projects(State(state): State<ApiState>) -> Response {
+async fn list_projects(
+    State(state): State<ApiState>,
+    Extension(caller): Extension<AuthUser>,
+) -> Response {
     match state.db.list_projects().await {
+        // A project-scoped key sees exactly its own project, nothing else.
         Ok(projects) => Json(ListProjectsResponse {
-            projects: projects.into_iter().map(project_summary).collect(),
+            projects: projects
+                .into_iter()
+                .filter(|project| match &caller.project_id {
+                    None => true,
+                    Some(scope) => project.id == *scope,
+                })
+                .map(project_summary)
+                .collect(),
         })
         .into_response(),
         Err(error) => {
@@ -350,6 +382,16 @@ fn project_summary(project: Project) -> ProjectSummary {
         name: project.name,
         created_at: project.created_at,
     }
+}
+
+/// Only ids this platform could have minted are accepted for reuse.
+fn is_valid_project_id(id: &str) -> bool {
+    id.strip_prefix("prj_").is_some_and(|hex| {
+        hex.len() == 16
+            && hex
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    })
 }
 
 /// Mirrors the manifest's `project.name` rule — the name ends up in

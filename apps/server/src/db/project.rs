@@ -10,15 +10,31 @@ pub(crate) struct Project {
 }
 
 impl Db {
-    pub(crate) async fn create_project(&self, name: &str, now: u64) -> io::Result<Project> {
+    pub(crate) async fn create_project(
+        &self,
+        name: &str,
+        id: Option<&str>,
+        now: u64,
+    ) -> io::Result<Project> {
         if self.project_id_by_name(name).await?.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 format!("project {name} already exists"),
             ));
         }
+        if let Some(id) = id
+            && self.project_by_id(id).await?.is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("project id {id} already exists"),
+            ));
+        }
 
-        let project_id = new_project_id();
+        let project_id = match id {
+            Some(id) => id.to_string(),
+            None => new_project_id(),
+        };
         self.conn
             .execute(
                 "INSERT INTO projects (id, name, created_at) VALUES (?1, ?2, ?3)",

@@ -95,10 +95,13 @@ tampered with in transit.
 
 ## Authorization
 
-After signature verification, the middleware resolves key → user and applies one rule:
+After signature verification, the middleware resolves key → user and attaches it to the
+request; handlers apply one rule:
 
 - Admin user → request allowed.
 - Project-scoped user → the request must target that user's project; anything else is 403.
+  Concretely: project listing returns only their project, and project creation, service
+  listing, and all user management are admin-only.
 
 ## Revocation
 

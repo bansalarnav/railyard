@@ -25,7 +25,6 @@ railyard whoami
 
 # Daily loop
 railyard init                        # create project on server, scaffold .railyard.json
-railyard link [<project>]            # adopt an existing server project into this directory
 railyard unlink
 railyard up [<service>…]             # validate, upload, diff, sync   (--env, --prune, --dry-run)
 railyard status                      # per-service state, replicas, domains, last deploy
@@ -85,10 +84,15 @@ Project commands (`up`, `logs`, `status`, …) pick a server in this order:
 
 1. `--server <name>` flag.
 2. The recorded binding for this project: global `config.json` keeps a `projects` map of
-   `prj_… → server name`, written by `init` (and `link`), and by `login` when redeeming a
-   project-scoped invite — the blob names the project, so an invited teammate is bound the
-   moment they log in. No binding → error pointing at `railyard init`; project commands
-   never guess a server.
+   `prj_… → server name`, written by `init`, and by `login` when redeeming a project-scoped
+   invite — the blob names the project, so an invited teammate is bound the moment they log
+   in.
+3. No binding → the command quietly checks every server this machine could act on (admin
+   identities, or one scoped to that very project) for the manifest's `project.id`, and
+   offers to link the match: one match → y/n prompt, several → a picker (non-interactive
+   runs get an error naming what was found). Only when no server has the project does it
+   error, pointing at `railyard init`. There is deliberately no `link` command — linking
+   happens where it is needed.
 
 Only `init` ever prompts — it is where a server gets chosen, so with several servers and no
 `--server` it shows an interactive picker (error with the list when not a TTY). Everything
@@ -120,11 +124,12 @@ stars the entry commands in the current directory would use (computed with the s
 resolution rules those commands apply). It is the first thing to run when a command hits a
 403. `--server <name>` narrows it to one entry.
 
-## init, link, up
+## init and up
 
 `railyard init` creates the project on the server (`POST /projects`), scaffolds
 `.railyard.json` (compose conversion or Dockerfile scan per [manifest](manifest.md)), writes
-`project.id`, and records the server binding.
+`project.id`, and records the server binding. It only ever **creates** — adopting an
+existing project is the auto-link offer's job (resolution step 3 above).
 
 `init` is also where a server gets **chosen**. `--server <name>` wins. With exactly one
 known server, use it and print the target
@@ -134,17 +139,15 @@ non-interactive runs must pass `--server`. The choice is then durable: the `proj
 written to the manifest plus the recorded binding pin every subsequent command (`up`, `logs`,
 `user add`, …) to that server, so two projects on two VPSes coexist with no per-command flags.
 
-An existing `project.id` may have come from cloning a public repository that somebody else
-already deployed. After choosing a server, `init` checks that server's projects:
+A manifest may already carry a `project.id` — a cloned repo somebody else deployed, or a
+project being brought to a second server. After choosing a server, `init` checks that
+server's projects:
 
-- If the selected server already knows the ID, `init` keeps the manifest unchanged and records
-  the local server binding.
-- If the selected server does not know the ID, `init` creates a fresh project there and replaces
-  the foreign ID in `.railyard.json`. The original deployment on the other server is untouched.
-
-`railyard link` is the inverse for cloning an already-deployed repo on a new machine, or
-adopting a server project into an existing file: pick the project (arg or interactive list),
-write `project.id` if missing, record the binding.
+- The selected server already has the ID → error; there is nothing to create, and the
+  auto-link offer handles adoption.
+- The selected server does not have the ID → create the project there under the **same**
+  ID. One project keeps one identity across servers, so deploying to a second VPS never
+  orphans the manifest's pointer to the first.
 
 `railyard up` is declarative sync, and it does **not** invent projects:
 

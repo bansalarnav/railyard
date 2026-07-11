@@ -53,9 +53,11 @@ pub(crate) fn list_projects(server: &ServerConfig) -> Result<Vec<ProjectSummary>
 pub(crate) fn create_project(
     server: &ServerConfig,
     name: &str,
+    id: Option<&str>,
 ) -> Result<ProjectSummary, Box<dyn Error>> {
     let body = serde_json::to_vec(&CreateProjectRequest {
         name: name.to_string(),
+        id: id.map(ToOwned::to_owned),
     })?;
     let response = signed_request(server, Method::POST, PROJECTS_PATH, body)?;
 
