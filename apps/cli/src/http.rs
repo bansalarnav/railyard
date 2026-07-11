@@ -1,11 +1,12 @@
 use railyard_auth::{
     CreateProjectRequest, CreateUserRequest, CreateUserResponse, HEADER_CONTENT_SHA256,
     HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP,
-    InvitePayload, ListProjectsResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH,
-    RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION, USERS_PATH,
+    InvitePayload, ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary,
+    REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION, USERS_PATH,
+    UserSummary, WHOAMI_PATH, WhoamiResponse,
 };
 use reqwest::blocking::{Client, Response};
-use reqwest::{Method, Url};
+use reqwest::{Method, StatusCode, Url};
 use serde_json::Value;
 use std::error::Error;
 
@@ -85,6 +86,65 @@ pub(crate) fn create_user(
     }
 
     Ok(response.json()?)
+}
+
+pub(crate) fn list_users(server: &ServerConfig) -> Result<Vec<UserSummary>, Box<dyn Error>> {
+    let response = signed_request(server, Method::GET, USERS_PATH, Vec::new())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(format!("user listing failed ({status}): {body}").into());
+    }
+
+    let listed: ListUsersResponse = response.json()?;
+    Ok(listed.users)
+}
+
+/// Ok(false) means the server knows no such user.
+pub(crate) fn remove_user(server: &ServerConfig, name: &str) -> Result<bool, Box<dyn Error>> {
+    let path = format!("{USERS_PATH}/{name}");
+    let response = signed_request(server, Method::DELETE, &path, Vec::new())?;
+
+    match response.status() {
+        StatusCode::NO_CONTENT => Ok(true),
+        StatusCode::NOT_FOUND => Ok(false),
+        status => {
+            let body = response.text().unwrap_or_default();
+            Err(format!("user removal failed ({status}): {body}").into())
+        }
+    }
+}
+
+pub(crate) enum WhoamiOutcome {
+    Identity(WhoamiResponse),
+    /// The server answered but rejected the key (revoked, unknown, …).
+    Rejected(String),
+    Unreachable,
+}
+
+pub(crate) fn whoami(server: &ServerConfig) -> Result<WhoamiOutcome, Box<dyn Error>> {
+    let response = match signed_request(server, Method::GET, WHOAMI_PATH, Vec::new()) {
+        Ok(response) => response,
+        Err(error) => {
+            let network = error
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(|error| error.is_connect() || error.is_timeout());
+            if network {
+                return Ok(WhoamiOutcome::Unreachable);
+            }
+            return Err(error);
+        }
+    };
+
+    let status = response.status();
+    if status.is_success() {
+        return Ok(WhoamiOutcome::Identity(response.json()?));
+    }
+    Ok(WhoamiOutcome::Rejected(format!(
+        "({status}) {}",
+        response.text().unwrap_or_default().trim()
+    )))
 }
 
 fn signed_request(

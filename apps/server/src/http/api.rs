@@ -10,7 +10,7 @@ use pingora::services::background::BackgroundService;
 use railyard_auth::{
     CreateProjectRequest, CreateUserRequest, CreateUserResponse, InviteProject,
     ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH,
-    USERS_PATH, UserSummary, unix_timestamp,
+    USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse, unix_timestamp,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -102,6 +102,7 @@ fn admin_routes(state: &ApiState) -> Router {
     protected_routes()
         .layer(Extension(AuthUser {
             id: "local".to_string(),
+            name: "local".to_string(),
             project_id: None,
         }))
         .with_state(state.clone())
@@ -126,6 +127,33 @@ fn protected_routes() -> Router<ApiState> {
         .route(PROJECTS_PATH, get(list_projects).post(create_project))
         .route(USERS_PATH, get(list_users).post(create_user))
         .route(&format!("{USERS_PATH}/{{name}}"), delete(remove_user))
+        .route(WHOAMI_PATH, get(whoami))
+}
+
+/// Echo back who the verified key belongs to — the client stores only a key
+/// id locally, so this is how it learns (and proves) its own identity.
+async fn whoami(
+    State(state): State<ApiState>,
+    Extension(caller): Extension<AuthUser>,
+) -> Response {
+    let project_name = match &caller.project_id {
+        None => None,
+        Some(id) => match state.db.project_by_id(id).await {
+            Ok(project) => project.map(|project| project.name),
+            Err(error) => {
+                log::error!("project lookup failed: {error}");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        },
+    };
+
+    Json(WhoamiResponse {
+        user_id: caller.id,
+        name: caller.name,
+        project_id: caller.project_id,
+        project_name,
+    })
+    .into_response()
 }
 
 async fn root(State(state): State<ApiState>) -> String {

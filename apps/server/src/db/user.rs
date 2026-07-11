@@ -17,6 +17,7 @@ pub(crate) struct User {
 #[derive(Clone)]
 pub(crate) struct AuthUser {
     pub(crate) id: String,
+    pub(crate) name: String,
     pub(crate) project_id: Option<String>,
 }
 
@@ -98,7 +99,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT public_key, id, project_id FROM users
+                "SELECT public_key, id, name, project_id FROM users
                  WHERE id = ?1 AND public_key IS NOT NULL",
                 params![key_id],
             )
@@ -110,7 +111,8 @@ impl Db {
                 text_column(&row, 0)?,
                 AuthUser {
                     id: text_column(&row, 1)?,
-                    project_id: optional_text_column(&row, 2)?,
+                    name: text_column(&row, 2)?,
+                    project_id: optional_text_column(&row, 3)?,
                 },
             ))),
             None => Ok(None),

@@ -4,11 +4,12 @@ mod http;
 
 use clap::{Parser, Subcommand};
 use dialoguer::{Select, theme::ColorfulTheme};
-use railyard_auth::{InvitePayload, unix_timestamp};
+use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, WhoamiResponse, unix_timestamp};
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
 use std::io::IsTerminal;
 use std::path::Path;
+use std::process::Command;
 use std::{env, fs, io};
 
 use auth::{generate_signing_key, public_key_base64};
@@ -30,10 +31,20 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Login {
-        blob: String,
+        /// An invite blob, or an SSH target (user@host) to mint one on
+        target: String,
         /// Local name for this server; defaults to the name embedded in the invite
         #[arg(long)]
         name: Option<String>,
+        /// User to create when logging in over SSH; defaults to your local username
+        #[arg(long)]
+        user: Option<String>,
+    },
+    /// Show every identity this machine holds and which one commands here would use
+    Whoami {
+        /// Only check this server
+        #[arg(long)]
+        server: Option<String>,
     },
     /// Create a project on a server and link this directory to it
     Init {
@@ -61,6 +72,17 @@ enum UserCommand {
         #[arg(long)]
         server: Option<String>,
     },
+    /// List a server's users (admin only)
+    List {
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Remove a user and revoke its keys (admin only)
+    Remove {
+        name: String,
+        #[arg(long)]
+        server: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -82,7 +104,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Login { blob, name } => login(&blob, name),
+        Commands::Login { target, name, user } => {
+            if target.starts_with(INVITE_BLOB_PREFIX) {
+                login(&target, name)
+            } else {
+                login_ssh(&target, name, user)
+            }
+        }
+        Commands::Whoami { server } => whoami(server),
         Commands::Init { name, server } => init(name, server),
         Commands::Services { command } => match command {
             ServicesCommand::List { server } => {
@@ -94,8 +123,78 @@ fn run() -> Result<(), Box<dyn Error>> {
         },
         Commands::User { command } => match command {
             UserCommand::Add { name, server } => user_add(&name, server),
+            UserCommand::List { server } => user_list(server),
+            UserCommand::Remove { name, server } => user_remove(&name, server),
         },
     }
+}
+
+/// One row per server entry, queried live so the answer reflects what the
+/// server believes (a revoked key shows up here, not in local config). The
+/// starred row is what commands in the current directory would use, computed
+/// with the same resolution rules those commands apply.
+fn whoami(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+    let mut servers = list_servers()?;
+    if servers.is_empty() {
+        return Err("no servers found; run `railyard login <blob>` first".into());
+    }
+
+    let (selected, note) = if let Some(name) = &server_flag {
+        servers.retain(|(entry, _)| entry == name);
+        if servers.is_empty() {
+            return Err(format!("no server named {name}").into());
+        }
+        (Some(name.clone()), format!("selected by --server {name}"))
+    } else if let Some(project) = linked_project()? {
+        match resolve_project_server(&project.id) {
+            Ok((name, _)) => (
+                Some(name),
+                format!(
+                    "selected for this directory (project {}, {})",
+                    project.name, project.id
+                ),
+            ),
+            Err(error) => (None, error.to_string()),
+        }
+    } else if servers.len() == 1 {
+        (
+            Some(servers[0].0.clone()),
+            "selected as the only known server".to_string(),
+        )
+    } else {
+        (
+            None,
+            "no project in this directory; commands here need --server <name>".to_string(),
+        )
+    };
+
+    for (name, server) in &servers {
+        let marker = if selected.as_deref() == Some(name.as_str()) {
+            "*"
+        } else {
+            " "
+        };
+        let who = match http::whoami(server) {
+            Ok(http::WhoamiOutcome::Identity(identity)) => describe_identity(&identity),
+            Ok(http::WhoamiOutcome::Rejected(reason)) => format!("key rejected {reason}"),
+            Ok(http::WhoamiOutcome::Unreachable) => "unreachable".to_string(),
+            Err(error) => format!("error: {error}"),
+        };
+        println!("{marker} {name}\t{}\t{who}", server.server_url);
+    }
+
+    println!();
+    println!("{note}");
+    Ok(())
+}
+
+fn describe_identity(identity: &WhoamiResponse) -> String {
+    let scope = match (&identity.project_id, &identity.project_name) {
+        (None, _) => "admin".to_string(),
+        (Some(id), None) => format!("project {id}"),
+        (Some(_), Some(project)) => format!("project {project}"),
+    };
+    format!("user {} — {scope}", identity.name)
 }
 
 /// Without --server, invite to the project this directory is linked to; the
@@ -111,7 +210,10 @@ fn user_add(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error
         return Ok(());
     }
 
-    let project = current_project()?;
+    let project = linked_project()?.ok_or(format!(
+        "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
+         `railyard init` first, or pass --server <name> to invite someone to a whole server"
+    ))?;
     let (server_name, server) = resolve_project_server(&project.id)?;
     let created = http::create_user(&server, name, Some(&project.id))?;
     println!(
@@ -128,39 +230,70 @@ fn print_invite(blob: &str) {
     println!("{blob}");
 }
 
+fn user_list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+    let (server_name, server) = resolve_server(server_flag)?;
+    let users = http::list_users(&server)?;
+    if users.is_empty() {
+        println!("No users on {server_name}.");
+        return Ok(());
+    }
+
+    let now = unix_timestamp();
+    for user in users {
+        let status = if user.has_key { "active" } else { "invited" };
+        let scope = user.project_id.as_deref().unwrap_or("admin");
+        println!(
+            "{}\t{}\t{}\t{}\tcreated {} ago",
+            user.name,
+            user.id,
+            scope,
+            status,
+            format_age(now.saturating_sub(user.created_at))
+        );
+    }
+    Ok(())
+}
+
+fn user_remove(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+    let (server_name, server) = resolve_server(server_flag)?;
+    if http::remove_user(&server, name)? {
+        println!("Removed user {name} from {server_name} and revoked its keys.");
+    } else {
+        println!("No user named {name} on {server_name}.");
+    }
+    Ok(())
+}
+
+fn format_age(seconds: u64) -> String {
+    match seconds {
+        0..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m", seconds / 60),
+        3600..86400 => format!("{}h", seconds / 3600),
+        _ => format!("{}d", seconds / 86400),
+    }
+}
+
 struct LinkedProject {
     id: String,
     name: String,
 }
 
-/// The project this directory is linked to: `.railyard.json` must exist and
-/// carry a `project.id` (both written by `railyard init`).
-fn current_project() -> Result<LinkedProject, Box<dyn Error>> {
+/// The project this directory is linked to, if any: `.railyard.json` with a
+/// `project.id` (both written by `railyard init`).
+fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
     let raw = match fs::read_to_string(MANIFEST_FILE) {
         Ok(raw) => raw,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(format!(
-                "no {MANIFEST_FILE} in this directory; run `railyard init` first, \
-                 or pass --server <name> to invite someone to a whole server"
-            )
-            .into());
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
 
     let manifest = railyard_manifest::parse(&raw)?;
-    let project = manifest.project.ok_or(format!(
-        "{MANIFEST_FILE} has no project; run `railyard init` first"
-    ))?;
-    let id = project.id.ok_or(format!(
-        "{MANIFEST_FILE} names project {} but has no project.id; run `railyard init` first",
-        project.name
-    ))?;
-
-    Ok(LinkedProject {
-        id,
-        name: project.name,
-    })
+    Ok(manifest.project.and_then(|project| {
+        project.id.map(|id| LinkedProject {
+            id,
+            name: project.name,
+        })
+    }))
 }
 
 /// The server recorded for a linked project by `railyard init`. Project
@@ -323,6 +456,60 @@ fn resolve_server_for_init(
         .interact()?;
 
     Ok(servers.remove(choice))
+}
+
+/// `login user@host`: bootstrap sugar for admins with SSH access — run
+/// `railyard-server user add` on the box and redeem the resulting blob
+/// locally in one step.
+fn login_ssh(
+    target: &str,
+    server_name: Option<String>,
+    user_flag: Option<String>,
+) -> Result<(), Box<dyn Error>> {
+    let user_name = match user_flag {
+        Some(name) => name,
+        None => {
+            let local = env::var("USER")
+                .or_else(|_| env::var("USERNAME"))
+                .unwrap_or_default();
+            let name = sanitize_user_name(&local);
+            if name.is_empty() {
+                return Err("could not derive a user name from $USER; pass --user <name>".into());
+            }
+            name
+        }
+    };
+
+    println!("Creating user {user_name} on {target} over SSH…");
+    let output = Command::new("ssh")
+        .arg(target)
+        .args(["railyard-server", "user", "add", &user_name])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "`ssh {target} railyard-server user add {user_name}` failed:\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let blob = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(INVITE_BLOB_PREFIX))
+        .ok_or("the remote `user add` printed no invite blob")?;
+
+    login(blob, server_name)
+}
+
+/// Squeeze a local username into the server's user-name charset.
+fn sanitize_user_name(raw: &str) -> String {
+    raw.to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
+        .collect()
 }
 
 fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> {

@@ -9,6 +9,7 @@ pub use invite::{
 pub use project::{CreateProjectRequest, ListProjectsResponse, PROJECTS_PATH, ProjectSummary};
 pub use user::{
     CreateUserRequest, CreateUserResponse, ListUsersResponse, USERS_PATH, UserSummary,
+    WHOAMI_PATH, WhoamiResponse,
 };
 
 use std::time::{SystemTime, UNIX_EPOCH};

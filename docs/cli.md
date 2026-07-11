@@ -19,7 +19,7 @@ The client CLI (`railyard`) is the only interface most users touch. Design rules
 ```
 # Getting connected
 railyard server setup <user@host> [--name <name>] # install server, start it, log in as admin
-railyard login <blob | user@host> [--name <name>] # redeem an invite (or mint+redeem over SSH)
+railyard login <blob | user@host> [--name <name>] [--user <name>] # redeem an invite (or mint+redeem over SSH)
 railyard logout [--server <name>]
 railyard whoami
 
@@ -112,8 +112,11 @@ Three entry points, one mechanism (the invite blob from [auth](auth.md)):
   The argument is disambiguated by the `ryd-invite-v1.` prefix.
 
 `logout` deletes the server entry and its private key locally and (best-effort) asks the
-server to revoke the key. `whoami` prints the active server, user name, and scope — the first
-thing to run when a command hits a 403.
+server to revoke the key. `whoami` prints one row per server entry — user name and scope,
+queried live from each server so revoked keys and unreachable boxes show up honestly — and
+stars the entry commands in the current directory would use (computed with the same
+resolution rules those commands apply). It is the first thing to run when a command hits a
+403. `--server <name>` narrows it to one entry.
 
 ## init, link, up
 
@@ -179,8 +182,9 @@ invites:
   the invite blob. `--server <name>` skips the project and creates a **server-wide admin**
   on that server instead. Either way the server only honors the request from an admin key —
   project-scoped users cannot mint invites (see [auth](auth.md)).
-- `railyard user remove <name>` / `railyard user list` — scoped to what the server entry can see:
-  admins see everyone on the server, project users see their project's users.
+- `railyard user remove <name>` / `railyard user list` — admin-only, like all user
+  management; a project-scoped key gets a 403. (Letting project users see their own
+  project's members can come later.)
 
 Key revocation (lost laptop) stays server-side (`railyard-server auth revoke-key`) for v1;
 an authenticated `railyard user keys` / `key revoke` can be added later without new concepts.
