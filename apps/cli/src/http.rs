@@ -43,6 +43,22 @@ pub(crate) fn list_services(server: &ServerConfig) -> Result<Value, Box<dyn Erro
     Ok(response.json()?)
 }
 
+pub(crate) fn list_project_services(
+    server: &ServerConfig,
+    project_id: &str,
+) -> Result<Value, Box<dyn Error>> {
+    let path = format!("{PROJECTS_PATH}/{project_id}/services");
+    let response = signed_request(server, Method::GET, &path, Vec::new())?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(format!("service listing failed ({status}): {body}").into());
+    }
+
+    Ok(response.json()?)
+}
+
 pub(crate) fn list_projects(server: &ServerConfig) -> Result<Vec<ProjectSummary>, Box<dyn Error>> {
     let response =
         signed_request(server, Method::GET, PROJECTS_PATH, Vec::new())?.error_for_status()?;

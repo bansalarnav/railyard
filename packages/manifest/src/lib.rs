@@ -113,7 +113,10 @@ impl RailyardManifest {
     }
     pub fn link_project(&mut self, name: &str, id: &str) {
         match &mut self.project {
-            Some(project) => project.id = Some(id.to_string()),
+            Some(project) => {
+                project.name = name.to_string();
+                project.id = Some(id.to_string());
+            }
             None => {
                 self.project = Some(Project {
                     id: Some(id.to_string()),

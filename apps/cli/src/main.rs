@@ -3,7 +3,7 @@ mod config;
 mod http;
 
 use clap::{Parser, Subcommand};
-use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, WhoamiResponse, unix_timestamp};
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
@@ -48,7 +48,7 @@ enum Commands {
     },
     /// Create a project on a server and link this directory to it
     Init {
-        /// Project name; defaults to the manifest's project name, then the directory name
+        /// Project name; otherwise prompts when creating a manifest
         name: Option<String>,
         #[arg(long)]
         server: Option<String>,
@@ -114,9 +114,19 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Whoami { server } => whoami(server),
         Commands::Init { name, server } => init(name, server),
         Commands::Services { command } => match command {
+            // In a linked project directory, list that project's services;
+            // `--server` (or no project) means the whole box, which is
+            // admin-only.
             ServicesCommand::List { server } => {
-                let (_, server) = resolve_server(server)?;
-                let services = http::list_services(&server)?;
+                let services = if server.is_none()
+                    && let Some(project) = linked_project()?
+                {
+                    let (_, server) = resolve_project_server(&project)?;
+                    http::list_project_services(&server, &project.id)?
+                } else {
+                    let (_, server) = resolve_server(server)?;
+                    http::list_services(&server)?
+                };
                 println!("{}", serde_json::to_string_pretty(&services)?);
                 Ok(())
             }
@@ -420,49 +430,84 @@ fn server_has_project(server: &ServerConfig, project: &LinkedProject) -> bool {
 
 fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     let manifest_path = Path::new(MANIFEST_FILE);
-    let mut manifest = match fs::read_to_string(manifest_path) {
-        Ok(raw) => railyard_manifest::parse(&raw)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => RailyardManifest::default(),
+    let (mut manifest, manifest_exists) = match fs::read_to_string(manifest_path) {
+        Ok(raw) => (railyard_manifest::parse(&raw)?, true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            (RailyardManifest::default(), false)
+        }
         Err(error) => return Err(error.into()),
     };
 
-    let project_name = resolve_project_name(name, &manifest)?;
+    let project_name = resolve_project_name(name, &manifest, manifest_exists)?;
     let (server_name, server) = resolve_server_for_init(server_flag)?;
 
     // A manifest can arrive with a project.id already in it — a cloned repo
     // someone else deployed, or a project being brought to a second server.
-    // If the chosen server already has that project there is nothing to
-    // create; otherwise create it there under the *same* id, so the manifest
-    // keeps identifying every deployment of this project at once.
+    // Reuse that id when it is available. If it already exists, let the user
+    // explicitly adopt the server project or create a separate local project.
     let existing_id = manifest.project.as_ref().and_then(|p| p.id.clone());
+    let mut id_to_create = existing_id.as_deref();
+    let mut name_to_create = project_name.clone();
     if let Some(id) = &existing_id {
         let projects = http::list_projects(&server)?;
-        if projects.into_iter().any(|project| project.id == *id) {
-            let linked_here = read_project_binding(id)?.as_deref() == Some(server_name.as_str());
-            return Err(if linked_here {
-                format!(
-                    "project {project_name} ({id}) already exists on {server_name} and this \
-                     directory is linked to it; nothing to do"
+        if let Some(server_project) = projects.into_iter().find(|project| project.id == *id) {
+            if !io::stdin().is_terminal() {
+                return Err(format!(
+                    "project {} ({id}) already exists on {server_name}; rerun `railyard init` \
+                     interactively to link this directory or create a new project",
+                    server_project.name
                 )
-            } else {
-                format!(
-                    "project {project_name} ({id}) already exists on {server_name}; nothing \
-                     to create"
-                )
+                .into());
             }
-            .into());
+
+            let choices = [
+                format!("Link this directory to project {}", server_project.name),
+                "Create a new project and replace the ID in this directory".to_string(),
+            ];
+            let choice = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Project {} ({id}) already exists on {server_name}. What would you like to do?",
+                    server_project.name
+                ))
+                .items(&choices)
+                .default(0)
+                .interact()?;
+
+            if choice == 0 {
+                manifest.link_project(&server_project.name, &server_project.id);
+                fs::write(manifest_path, manifest.to_json_string())?;
+                record_project_binding(&server_project.id, &server_name)?;
+                println!(
+                    "Linked this directory to project {} ({}) on {server_name}",
+                    server_project.name, server_project.id
+                );
+                return Ok(());
+            }
+
+            id_to_create = None;
+            if name_to_create == server_project.name {
+                name_to_create = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Name for the new project")
+                    .default(format!("{project_name}-new"))
+                    .interact_text()?;
+            }
+            println!(
+                "Creating project {name_to_create} on {server_name} ({}) with a new id",
+                server.server_url
+            );
+        } else {
+            println!(
+                "Creating project {project_name} on {server_name} ({}) with existing id {id}",
+                server.server_url
+            );
         }
-        println!(
-            "Creating project {project_name} on {server_name} ({}) with existing id {id}",
-            server.server_url
-        );
     } else {
         println!(
             "Creating project {project_name} on {server_name} ({})",
             server.server_url
         );
     }
-    let created = http::create_project(&server, &project_name, existing_id.as_deref())?;
+    let created = http::create_project(&server, &name_to_create, id_to_create)?;
 
     manifest.link_project(&created.name, &created.id);
     fs::write(manifest_path, manifest.to_json_string())?;
@@ -475,12 +520,13 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
     Ok(())
 }
 
-/// Explicit arg wins unless the manifest already names a different project;
-/// then the manifest's name; then the directory name squeezed into a DNS
-/// label (the same shape `project.name` validation demands).
+/// Explicit arg wins unless the manifest already names a different project.
+/// A new manifest prompts on a TTY, defaulting to the directory name squeezed
+/// into the same DNS-label shape that `project.name` validation demands.
 fn resolve_project_name(
     explicit: Option<String>,
     manifest: &RailyardManifest,
+    manifest_exists: bool,
 ) -> Result<String, Box<dyn Error>> {
     let manifest_name = manifest.project.as_ref().map(|p| p.name.clone());
 
@@ -512,6 +558,13 @@ fn resolve_project_name(
                 .into(),
         );
     }
+    if !manifest_exists && io::stdin().is_terminal() {
+        return Ok(Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("Project name")
+            .default(name)
+            .interact_text()?);
+    }
+
     Ok(name)
 }
 

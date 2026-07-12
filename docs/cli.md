@@ -128,8 +128,9 @@ resolution rules those commands apply). It is the first thing to run when a comm
 
 `railyard init` creates the project on the server (`POST /projects`), scaffolds
 `.railyard.json` (compose conversion or Dockerfile scan per [manifest](manifest.md)), writes
-`project.id`, and records the server binding. It only ever **creates** — adopting an
-existing project is the auto-link offer's job (resolution step 3 above).
+`project.id`, and records the server binding. When the manifest's ID already exists on the
+selected server, it offers to link this directory to that project or create a distinct project
+with a new ID.
 
 `init` is also where a server gets **chosen**. `--server <name>` wins. With exactly one
 known server, use it and print the target
@@ -143,8 +144,9 @@ A manifest may already carry a `project.id` — a cloned repo somebody else depl
 project being brought to a second server. After choosing a server, `init` checks that
 server's projects:
 
-- The selected server already has the ID → error; there is nothing to create, and the
-  auto-link offer handles adoption.
+- The selected server already has the ID → interactively offer to link this directory to the
+  existing project, or create a new project and replace the manifest's ID. Non-interactive runs
+  stop and ask the user to rerun `init` interactively.
 - The selected server does not have the ID → create the project there under the **same**
   ID. One project keeps one identity across servers, so deploying to a second VPS never
   orphans the manifest's pointer to the first.

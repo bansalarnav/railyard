@@ -100,8 +100,10 @@ request; handlers apply one rule:
 
 - Admin user → request allowed.
 - Project-scoped user → the request must target that user's project; anything else is 403.
-  Concretely: project listing returns only their project, and project creation, service
-  listing, and all user management are admin-only.
+  Routes under `/api/projects/{project_id}` sit behind a shared project-access guard
+  (scope is checked before existence, so a foreign key cannot probe which ids exist).
+  Project listing returns only the caller's project; project creation, the box-wide
+  service/routing table, and all user management are admin-only.
 
 ## Revocation
 

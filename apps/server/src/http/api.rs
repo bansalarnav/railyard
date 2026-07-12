@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use super::auth::{redeem_invite, verify_signature};
+use super::auth::{redeem_invite, require_project_access, verify_signature};
 use super::state::{ApiState, AppState};
 use crate::db::{AuthUser, Db, Project};
 use crate::invite::mint_invite;
@@ -99,7 +99,7 @@ fn bind_admin_socket() -> tokio::net::UnixListener {
 /// Requests on the admin socket act as an admin user without signatures;
 /// the socket's file permissions are the trust boundary.
 fn admin_routes(state: &ApiState) -> Router {
-    protected_routes()
+    protected_routes(state)
         .layer(Extension(AuthUser {
             id: "local".to_string(),
             name: "local".to_string(),
@@ -109,7 +109,7 @@ fn admin_routes(state: &ApiState) -> Router {
 }
 
 fn api_routes(state: &ApiState) -> Router<ApiState> {
-    protected_routes()
+    protected_routes(state)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signature,
@@ -120,7 +120,7 @@ fn api_routes(state: &ApiState) -> Router<ApiState> {
 /// Every authenticated route, shared by the signed TCP listener and the
 /// local admin socket. Handlers see the caller as an `AuthUser` extension,
 /// inserted by the signature middleware or the admin socket respectively.
-fn protected_routes() -> Router<ApiState> {
+fn protected_routes(state: &ApiState) -> Router<ApiState> {
     Router::new()
         .route("/", get(root))
         .route("/api/services", get(list_services))
@@ -128,6 +128,33 @@ fn protected_routes() -> Router<ApiState> {
         .route(USERS_PATH, get(list_users).post(create_user))
         .route(&format!("{USERS_PATH}/{{name}}"), delete(remove_user))
         .route(WHOAMI_PATH, get(whoami))
+        .nest(&format!("{PROJECTS_PATH}/{{project_id}}"), project_routes(state))
+}
+
+/// Routes addressing one project, all behind the project access guard:
+/// admins reach any project, a project-scoped key only its own.
+fn project_routes(state: &ApiState) -> Router<ApiState> {
+    Router::new()
+        .route("/services", get(list_project_services))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_project_access,
+        ))
+}
+
+#[derive(Serialize)]
+struct ProjectServicesResponse {
+    services: Vec<ServiceEntry>,
+}
+
+/// The services belonging to one project. Deploys are not implemented yet,
+/// so nothing associates a service with a project — every project's list is
+/// empty for now. The box-wide routing table stays admin-only at
+/// /api/services.
+async fn list_project_services() -> Json<ProjectServicesResponse> {
+    Json(ProjectServicesResponse {
+        services: Vec::new(),
+    })
 }
 
 /// Echo back who the verified key belongs to — the client stores only a key
