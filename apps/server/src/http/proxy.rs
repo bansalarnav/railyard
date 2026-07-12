@@ -149,7 +149,7 @@ mod tests {
             Some("railyard".to_string())
         );
         assert_eq!(
-            name_of(table.route_for(Some("example.com"), "/railyard/api/services")),
+            name_of(table.route_for(Some("example.com"), "/railyard/api/users")),
             Some("railyard".to_string())
         );
         assert_eq!(

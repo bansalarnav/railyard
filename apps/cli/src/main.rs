@@ -53,10 +53,6 @@ enum Commands {
         #[arg(long)]
         server: Option<String>,
     },
-    Services {
-        #[command(subcommand)]
-        command: ServicesCommand,
-    },
     User {
         #[command(subcommand)]
         command: UserCommand,
@@ -85,14 +81,6 @@ enum UserCommand {
     },
 }
 
-#[derive(Subcommand)]
-enum ServicesCommand {
-    List {
-        #[arg(long)]
-        server: Option<String>,
-    },
-}
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
@@ -113,24 +101,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Whoami { server } => whoami(server),
         Commands::Init { name, server } => init(name, server),
-        Commands::Services { command } => match command {
-            // In a linked project directory, list that project's services;
-            // `--server` (or no project) means the whole box, which is
-            // admin-only.
-            ServicesCommand::List { server } => {
-                let services = if server.is_none()
-                    && let Some(project) = linked_project()?
-                {
-                    let (_, server) = resolve_project_server(&project)?;
-                    http::list_project_services(&server, &project.id)?
-                } else {
-                    let (_, server) = resolve_server(server)?;
-                    http::list_services(&server)?
-                };
-                println!("{}", serde_json::to_string_pretty(&services)?);
-                Ok(())
-            }
-        },
         Commands::User { command } => match command {
             UserCommand::Add { name, server } => user_add(&name, server),
             UserCommand::List { server } => user_list(server),

@@ -96,7 +96,7 @@ Project commands (`up`, `logs`, `status`, …) pick a server in this order:
 
 Only `init` ever prompts — it is where a server gets chosen, so with several servers and no
 `--server` it shows an interactive picker (error with the list when not a TTY). Everything
-else, including commands with no project context (`whoami`, `services list`), accepts
+else, including commands with no project context (`whoami`), accepts
 `--server` or falls back to "the only server" if exactly one exists, else errors. Nothing
 about server selection is ever written into `.railyard.json` — the file is committed and
 shared; identity is per-machine.

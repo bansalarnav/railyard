@@ -1,10 +1,9 @@
+use axum::Json;
 use axum::body::{Body, to_bytes};
-use axum::extract::{Path, Request, State};
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::{Extension, Json};
-use std::collections::HashMap;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -16,7 +15,7 @@ use railyard_auth::{
 use sha2::{Digest, Sha256};
 
 use super::state::ApiState;
-use crate::db::{AuthUser, token_hash};
+use crate::db::token_hash;
 const TIMESTAMP_WINDOW_SECONDS: u64 = 300;
 
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
@@ -51,45 +50,6 @@ pub(crate) async fn redeem_invite(
             .into_response(),
         Err(error) => {
             log::error!("invite redemption failed: {error}");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-/// Project access guard for routes under `/api/projects/{project_id}`:
-/// admins reach any project, a project-scoped key only its own. Scope is
-/// checked before existence so a foreign key can't probe which ids exist.
-pub(crate) async fn require_project_access(
-    State(state): State<ApiState>,
-    Path(params): Path<HashMap<String, String>>,
-    Extension(caller): Extension<AuthUser>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let Some(project_id) = params.get("project_id") else {
-        log::error!("project access guard mounted on a route without {{project_id}}");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-
-    if let Some(scope) = &caller.project_id
-        && scope != project_id
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            "this key is scoped to a different project",
-        )
-            .into_response();
-    }
-
-    match state.db.project_by_id(project_id).await {
-        Ok(Some(_)) => next.run(request).await,
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            format!("no project {project_id} on this server"),
-        )
-            .into_response(),
-        Err(error) => {
-            log::error!("project lookup failed: {error}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }

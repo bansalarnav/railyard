@@ -12,31 +12,17 @@ use railyard_auth::{
     ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH,
     USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse, unix_timestamp,
 };
-use serde::Serialize;
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use super::auth::{redeem_invite, require_project_access, verify_signature};
+use super::auth::{redeem_invite, verify_signature};
 use super::state::{ApiState, AppState};
 use crate::db::{AuthUser, Db, Project};
 use crate::invite::mint_invite;
 
 pub(crate) struct ApiService {
     pub(crate) state: AppState,
-}
-
-#[derive(Serialize)]
-struct ServiceEntry {
-    name: String,
-    upstream_addr: String,
-}
-
-#[derive(Serialize)]
-struct ServicesResponse {
-    proxy_addr: String,
-    api_addr: String,
-    services: Vec<ServiceEntry>,
 }
 
 #[async_trait]
@@ -99,7 +85,7 @@ fn bind_admin_socket() -> tokio::net::UnixListener {
 /// Requests on the admin socket act as an admin user without signatures;
 /// the socket's file permissions are the trust boundary.
 fn admin_routes(state: &ApiState) -> Router {
-    protected_routes(state)
+    protected_routes()
         .layer(Extension(AuthUser {
             id: "local".to_string(),
             name: "local".to_string(),
@@ -109,7 +95,7 @@ fn admin_routes(state: &ApiState) -> Router {
 }
 
 fn api_routes(state: &ApiState) -> Router<ApiState> {
-    protected_routes(state)
+    protected_routes()
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signature,
@@ -120,41 +106,13 @@ fn api_routes(state: &ApiState) -> Router<ApiState> {
 /// Every authenticated route, shared by the signed TCP listener and the
 /// local admin socket. Handlers see the caller as an `AuthUser` extension,
 /// inserted by the signature middleware or the admin socket respectively.
-fn protected_routes(state: &ApiState) -> Router<ApiState> {
+fn protected_routes() -> Router<ApiState> {
     Router::new()
         .route("/", get(root))
-        .route("/api/services", get(list_services))
         .route(PROJECTS_PATH, get(list_projects).post(create_project))
         .route(USERS_PATH, get(list_users).post(create_user))
         .route(&format!("{USERS_PATH}/{{name}}"), delete(remove_user))
         .route(WHOAMI_PATH, get(whoami))
-        .nest(&format!("{PROJECTS_PATH}/{{project_id}}"), project_routes(state))
-}
-
-/// Routes addressing one project, all behind the project access guard:
-/// admins reach any project, a project-scoped key only its own.
-fn project_routes(state: &ApiState) -> Router<ApiState> {
-    Router::new()
-        .route("/services", get(list_project_services))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_project_access,
-        ))
-}
-
-#[derive(Serialize)]
-struct ProjectServicesResponse {
-    services: Vec<ServiceEntry>,
-}
-
-/// The services belonging to one project. Deploys are not implemented yet,
-/// so nothing associates a service with a project — every project's list is
-/// empty for now. The box-wide routing table stays admin-only at
-/// /api/services.
-async fn list_project_services() -> Json<ProjectServicesResponse> {
-    Json(ProjectServicesResponse {
-        services: Vec::new(),
-    })
 }
 
 /// Echo back who the verified key belongs to — the client stores only a key
@@ -194,32 +152,6 @@ async fn root(State(state): State<ApiState>) -> String {
 
 async fn healthz() -> &'static str {
     "ok"
-}
-
-async fn list_services(
-    State(state): State<ApiState>,
-    Extension(caller): Extension<AuthUser>,
-) -> Response {
-    if caller.project_id.is_some() {
-        return (StatusCode::FORBIDDEN, "only server admins can list services").into_response();
-    }
-
-    let services = state
-        .app
-        .service_upstreams
-        .iter()
-        .map(|(name, addr)| ServiceEntry {
-            name: name.clone(),
-            upstream_addr: addr.to_string(),
-        })
-        .collect();
-
-    Json(ServicesResponse {
-        proxy_addr: state.app.proxy_addr.to_string(),
-        api_addr: state.app.api_addr.to_string(),
-        services,
-    })
-    .into_response()
 }
 
 async fn create_project(
