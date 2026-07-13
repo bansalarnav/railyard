@@ -64,7 +64,10 @@ enum UserCommand {
     /// Invite a user to the current project and print the invite blob
     Add {
         name: String,
-        /// Invite to this entire server (admin) instead of the current project
+        /// Invite a server-wide admin instead of a project user
+        #[arg(long)]
+        admin: bool,
+        /// Use this server instead of resolving one
         #[arg(long)]
         server: Option<String>,
     },
@@ -102,7 +105,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Whoami { server } => whoami(server),
         Commands::Init { name, server } => init(name, server),
         Commands::User { command } => match command {
-            UserCommand::Add { name, server } => user_add(&name, server),
+            UserCommand::Add {
+                name,
+                admin,
+                server,
+            } => user_add(&name, admin, server),
             UserCommand::List { server } => user_list(server),
             UserCommand::Remove { name, server } => user_remove(&name, server),
         },
@@ -186,29 +193,58 @@ fn describe_identity(identity: &WhoamiResponse) -> String {
     format!("user {} — {scope}", identity.name)
 }
 
-/// Without --server, invite to the project this directory is linked to; the
-/// flag switches to a server-wide (admin) invite on the named server. Either
-/// way the server only honors the request from an admin key.
-fn user_add(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
-    if let Some(server_name) = server_flag {
-        let server = read_server(&server_name)
-            .map_err(|error| format!("could not read server {server_name}: {error}"))?;
-        let created = http::create_user(&server, name, None)?;
-        println!("Created admin user {name} with access to all of {server_name}.");
-        print_invite(&created.invite_blob);
-        return Ok(());
+/// Invite to the project this directory is linked to; `--server` only pins
+/// which server entry to use, like every other project command. `--admin`
+/// switches to a server-wide (admin) invite. Either way the server only
+/// honors the request from an admin key.
+fn user_add(name: &str, admin: bool, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+    if admin {
+        return user_add_admin(name, server_flag);
     }
 
-    let project = linked_project()?.ok_or(format!(
-        "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
-         `railyard init` first, or pass --server <name> to invite someone to a whole server"
-    ))?;
-    let (server_name, server) = resolve_project_server(&project)?;
+    let Some(project) = linked_project()? else {
+        // No project to scope the invite to. On a TTY, offer the only other
+        // invite this command can mint — but never silently escalate.
+        if server_flag.is_none()
+            && io::stdin().is_terminal()
+            && Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "No project is linked in this directory. Create a server-wide admin \
+                     invite for {name} instead?"
+                ))
+                .default(false)
+                .interact()?
+        {
+            return user_add_admin(name, None);
+        }
+        return Err(format!(
+            "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
+             `railyard init` first, or pass --admin to invite someone to a whole server"
+        )
+        .into());
+    };
+
+    let (server_name, server) = match server_flag {
+        Some(server_name) => {
+            let server = read_server(&server_name)
+                .map_err(|error| format!("could not read server {server_name}: {error}"))?;
+            (server_name, server)
+        }
+        None => resolve_project_server(&project)?,
+    };
     let created = http::create_user(&server, name, Some(&project.id))?;
     println!(
         "Created user {name} scoped to project {} on {server_name}.",
         project.name
     );
+    print_invite(&created.invite_blob);
+    Ok(())
+}
+
+fn user_add_admin(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+    let (server_name, server) = resolve_admin_server(server_flag)?;
+    let created = http::create_user(&server, name, None)?;
+    println!("Created admin user {name} with access to all of {server_name}.");
     print_invite(&created.invite_blob);
     Ok(())
 }
@@ -596,6 +632,66 @@ fn resolve_server_for_init(
         .interact()?;
 
     Ok(servers.remove(choice))
+}
+
+/// The server an admin invite lands on. `--server` wins, then the sole known
+/// server. With several, a TTY narrows to the entries whose identity is an
+/// admin (only admins can mint invites) and asks; non-interactive runs must
+/// pass --server.
+fn resolve_admin_server(
+    explicit: Option<String>,
+) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    let servers = list_servers()?;
+    if explicit.is_some() || servers.len() < 2 || !io::stdin().is_terminal() {
+        return resolve_server(explicit);
+    }
+
+    let mut candidates: Vec<(String, ServerConfig)> = servers
+        .into_iter()
+        .filter(|(_, server)| is_admin_identity(server))
+        .collect();
+    match candidates.len() {
+        0 => Err(
+            "none of your servers answered with an admin identity, and only admins can mint \
+             invites; check `railyard whoami`"
+                .into(),
+        ),
+        1 => {
+            let (name, server) = candidates.remove(0);
+            let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Only {name} ({}) holds an admin identity here. Create the admin invite \
+                     there?",
+                    server.server_url
+                ))
+                .default(true)
+                .interact()?;
+            if !confirmed {
+                return Err("no server chosen; pass --server <name> to pick one".into());
+            }
+            Ok((name, server))
+        }
+        _ => {
+            let items: Vec<String> = candidates
+                .iter()
+                .map(|(name, server)| format!("{name} ({})", server.server_url))
+                .collect();
+            let choice = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt("Create the admin invite on which server?")
+                .items(&items)
+                .default(0)
+                .interact()?;
+            Ok(candidates.remove(choice))
+        }
+    }
+}
+
+/// Does this entry's key currently prove an admin on its server?
+fn is_admin_identity(server: &ServerConfig) -> bool {
+    matches!(
+        http::whoami(server),
+        Ok(http::WhoamiOutcome::Identity(identity)) if identity.project_id.is_none()
+    )
 }
 
 /// `login user@host`: bootstrap sugar for admins with SSH access — run
