@@ -54,6 +54,8 @@ enum Commands {
         #[arg(long)]
         server: Option<String>,
     },
+    /// Pick one of your servers and link this directory's project to it
+    Link,
     /// Forget which server this directory's project is linked to
     Unlink,
     User {
@@ -107,6 +109,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Whoami { server } => whoami(server),
         Commands::Init { name, server } => init(name, server),
+        Commands::Link => link(),
         Commands::Unlink => unlink(),
         Commands::User { command } => match command {
             UserCommand::Add {
@@ -432,7 +435,8 @@ fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dyn Error>> {
 
 /// No binding yet: quietly look for the project on every server this machine
 /// could act on — admin identities, or one scoped to this very project — and
-/// offer to link the match. This is why there is no `link` command.
+/// offer to link the match. `railyard link` is the explicit spelling of the
+/// same step, for when the user wants to pick the server themselves.
 fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
     let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
     let mut unchecked: Vec<String> = Vec::new();
@@ -718,6 +722,74 @@ fn confirm_nested_init() -> Result<(), Box<dyn Error>> {
         return Err("init cancelled".into());
     }
     Ok(())
+}
+
+/// Show every server this machine knows and link this directory's project to
+/// the chosen one. Unlike the automatic offer in `offer_project_link`, the
+/// list is not narrowed to servers that have the project — the choice is
+/// checked after, so picking a server without it points at `init` instead of
+/// silently recording a bad binding.
+fn link() -> Result<(), Box<dyn Error>> {
+    let project = confirmed_linked_project()?.ok_or(format!(
+        "no project in this directory ({MANIFEST_FILE} with a project.id); run `railyard init` \
+         to create one"
+    ))?;
+
+    match project_binding(&project.id)? {
+        ProjectBinding::Bound(name, _) => {
+            println!(
+                "Project {} ({}) is already linked to {name} — nothing to do.",
+                project.name, project.id
+            );
+            println!("To link this project to another server, run `railyard unlink` first.");
+            return Ok(());
+        }
+        ProjectBinding::Stale(stale) => eprintln!(
+            "note: ignoring the link to {stale}, which no longer exists on this machine"
+        ),
+        ProjectBinding::Unbound => {}
+    }
+
+    let mut servers = list_servers()?;
+    if servers.is_empty() {
+        return Err("no servers found; run `railyard login <blob>` first".into());
+    }
+    if !io::stdin().is_terminal() {
+        return Err(format!(
+            "`railyard link` picks a server interactively; rerun on a TTY (project {}, {})",
+            project.name, project.id
+        )
+        .into());
+    }
+
+    let items: Vec<String> = servers
+        .iter()
+        .map(|(name, server)| format!("{name} ({})", server.server_url))
+        .collect();
+    let choice = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("Link project {} to which server?", project.name))
+        .items(&items)
+        .default(0)
+        .interact()?;
+    let (name, server) = servers.remove(choice);
+
+    match server_project_presence(&server, &project) {
+        ProjectPresence::Present => {
+            link_project(&project, name, server)?;
+            Ok(())
+        }
+        ProjectPresence::Absent => Err(format!(
+            "{name} does not have project {} ({}); run `railyard init --server {name}` to \
+             create it there",
+            project.name, project.id
+        )
+        .into()),
+        ProjectPresence::Unknown(reason) => Err(format!(
+            "could not check {name} for project {} ({reason}); restore access there and retry",
+            project.name
+        )
+        .into()),
+    }
 }
 
 /// Drop the recorded project→server binding. The manifest keeps its
