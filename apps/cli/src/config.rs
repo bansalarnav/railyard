@@ -39,6 +39,14 @@ pub(crate) fn read_server(server_name: &str) -> io::Result<ServerConfig> {
     serde_json::from_str(&raw).map_err(invalid_data)
 }
 
+/// Delete a server entry and its private key file.
+pub(crate) fn remove_server(server_name: &str) -> io::Result<()> {
+    if let Ok(server) = read_server(server_name) {
+        let _ = fs::remove_file(&server.private_key_path);
+    }
+    fs::remove_file(server_path(server_name)?)
+}
+
 pub(crate) fn list_servers() -> io::Result<Vec<(String, ServerConfig)>> {
     let dir = config_root()?.join("client").join("servers");
     let entries = match fs::read_dir(&dir) {
@@ -81,19 +89,48 @@ pub(crate) fn read_project_binding(project_id: &str) -> io::Result<Option<String
 }
 
 pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> io::Result<()> {
-    let path = global_config_path()?;
     let mut config = read_global_config()?;
-
     config
         .projects
         .insert(project_id.to_string(), server_name.to_string());
+    write_global_config(&config)
+}
 
+/// Forget which server a project deploys through; returns the server name
+/// the binding pointed at, if there was one.
+pub(crate) fn remove_project_binding(project_id: &str) -> io::Result<Option<String>> {
+    let mut config = read_global_config()?;
+    let removed = config.projects.remove(project_id);
+    if removed.is_some() {
+        write_global_config(&config)?;
+    }
+    Ok(removed)
+}
+
+/// Point every project bound to server `from` at `to`; returns how many moved.
+pub(crate) fn rebind_projects(from: &str, to: &str) -> io::Result<usize> {
+    let mut config = read_global_config()?;
+    let mut moved = 0;
+    for server in config.projects.values_mut() {
+        if server.as_str() == from {
+            *server = to.to_string();
+            moved += 1;
+        }
+    }
+    if moved > 0 {
+        write_global_config(&config)?;
+    }
+    Ok(moved)
+}
+
+fn write_global_config(config: &GlobalConfig) -> io::Result<()> {
+    let path = global_config_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(
         &path,
-        serde_json::to_string_pretty(&config).map_err(invalid_data)?,
+        serde_json::to_string_pretty(config).map_err(invalid_data)?,
     )
 }
 

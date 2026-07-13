@@ -25,7 +25,7 @@ railyard whoami
 
 # Daily loop
 railyard init                        # create project on server, scaffold .railyard.json
-railyard unlink
+railyard unlink                      # forget this project's server binding (manifest untouched)
 railyard up [<service>…]             # validate, upload, diff, sync   (--env, --prune, --dry-run)
 railyard status                      # per-service state, replicas, domains, last deploy
 railyard logs [<service>]            # runtime logs                   (-f, -n, --build, --deploy <id>)
@@ -79,6 +79,11 @@ When the derived name is already taken:
 - **A different server with the same derived name** — refuse to overwrite the existing entry;
   pass `--name <name>` to choose another local name.
 
+Redeeming an **admin** invite for a server where project-scoped entries exist removes those
+entries (and their key files) and repoints their project bindings at the new admin entry —
+an admin identity covers every project on the server, so the narrower entries are redundant.
+The only way to hold both was joining a project first and being promoted to admin later.
+
 ### Resolution
 
 Project commands (`up`, `logs`, `status`, …) pick a server in this order:
@@ -92,8 +97,17 @@ Project commands (`up`, `logs`, `status`, …) pick a server in this order:
    identities, or one scoped to that very project) for the manifest's `project.id`, and
    offers to link the match: one match → y/n prompt, several → a picker (non-interactive
    runs get an error naming what was found). Only when no server has the project does it
-   error, pointing at `railyard init`. There is deliberately no `link` command — linking
-   happens where it is needed.
+   error, pointing at `railyard init` — unless some servers couldn't be checked
+   (unreachable, rejected key), in which case the error names them instead of suggesting
+   `init`, which would recreate the project. There is deliberately no `link` command —
+   linking happens where it is needed.
+
+The manifest is found in the current directory or the nearest ancestor; acting on an
+ancestor's manifest asks for confirmation first (non-interactive runs error, naming where
+the manifest is). A binding whose server entry has since been removed is treated as no
+binding: project commands note the stale link and fall back to discovery. `railyard unlink`
+drops the binding explicitly — the manifest keeps its `project.id` — which is how a project
+moves servers: `unlink`, then `init` against the new one.
 
 Only commands where a server gets **chosen** prompt: `init` shows an interactive picker with
 several servers and no `--server` (error with the list when not a TTY), and `user add
@@ -133,6 +147,10 @@ resolution rules those commands apply). It is the first thing to run when a comm
 `project.id`, and records the server binding. When the manifest's ID already exists on the
 selected server, it offers to link this directory to that project or create a distinct project
 with a new ID.
+
+`init` is idempotent: when the manifest's project already has a recorded binding it prints
+the existing link and exits 0, pointing at `railyard unlink` for moving to another server
+(`--server` naming a different server errors with the same hint).
 
 `init` is also where a server gets **chosen**. `--server <name>` wins. With exactly one
 known server, use it and print the target

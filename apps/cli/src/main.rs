@@ -8,14 +8,15 @@ use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, WhoamiResponse, unix_time
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs, io};
 
 use auth::{generate_signing_key, public_key_base64};
 use config::{
-    ServerConfig, list_servers, read_project_binding, read_server, record_project_binding,
-    sanitize_server_name, write_server, write_signing_key,
+    ServerConfig, list_servers, read_project_binding, read_server, rebind_projects,
+    record_project_binding, remove_project_binding, remove_server, sanitize_server_name,
+    write_server, write_signing_key,
 };
 
 const MANIFEST_FILE: &str = ".railyard.json";
@@ -53,6 +54,8 @@ enum Commands {
         #[arg(long)]
         server: Option<String>,
     },
+    /// Forget which server this directory's project is linked to
+    Unlink,
     User {
         #[command(subcommand)]
         command: UserCommand,
@@ -104,6 +107,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Whoami { server } => whoami(server),
         Commands::Init { name, server } => init(name, server),
+        Commands::Unlink => unlink(),
         Commands::User { command } => match command {
             UserCommand::Add {
                 name,
@@ -135,18 +139,30 @@ fn whoami(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     } else if let Some(project) = linked_project()? {
         // Report-only: whoami never prompts, so it checks the binding rather
         // than resolving (which may offer to link).
-        match bound_project_server(&project.id) {
-            Ok(Some((name, _))) => (
+        let via = match &project.manifest_dir {
+            Some(dir) => format!(", manifest in {}", dir.display()),
+            None => String::new(),
+        };
+        match project_binding(&project.id) {
+            Ok(ProjectBinding::Bound(name, _)) => (
                 Some(name),
                 format!(
-                    "selected for this directory (project {}, {})",
+                    "selected for this directory (project {}, {}{via})",
                     project.name, project.id
                 ),
             ),
-            Ok(None) => (
+            Ok(ProjectBinding::Stale(stale)) => (
                 None,
                 format!(
-                    "project {} ({}) is not linked here yet",
+                    "project {} ({}{via}) is linked to {stale}, which no longer exists here; \
+                     any project command re-offers the link, `railyard unlink` forgets it",
+                    project.name, project.id
+                ),
+            ),
+            Ok(ProjectBinding::Unbound) => (
+                None,
+                format!(
+                    "project {} ({}{via}) is not linked here yet",
                     project.name, project.id
                 ),
             ),
@@ -202,7 +218,7 @@ fn user_add(name: &str, admin: bool, server_flag: Option<String>) -> Result<(), 
         return user_add_admin(name, server_flag);
     }
 
-    let Some(project) = linked_project()? else {
+    let Some(project) = confirmed_linked_project()? else {
         // No project to scope the invite to. On a TTY, offer the only other
         // invite this command can mint — but never silently escalate.
         if server_flag.is_none()
@@ -301,57 +317,145 @@ fn format_age(seconds: u64) -> String {
 struct LinkedProject {
     id: String,
     name: String,
+    /// Set when the manifest was found in an ancestor directory, not here.
+    manifest_dir: Option<PathBuf>,
 }
 
-/// The project this directory is linked to, if any: `.railyard.json` with a
-/// `project.id` (both written by `railyard init`).
+/// The project this directory belongs to, if any: the nearest
+/// `.railyard.json` here or in an ancestor, carrying a `project.id` (both
+/// written by `railyard init`).
 fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
-    let raw = match fs::read_to_string(MANIFEST_FILE) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
+    let cwd = env::current_dir()?;
+    let Some((dir, raw)) = find_manifest(&cwd)? else {
+        return Ok(None);
     };
 
     let manifest = railyard_manifest::parse(&raw)?;
+    let manifest_dir = (dir != cwd).then_some(dir);
     Ok(manifest.project.and_then(|project| {
         project.id.map(|id| LinkedProject {
             id,
             name: project.name,
+            manifest_dir,
         })
     }))
 }
 
-/// The server for a linked project: the recorded binding, or — when none
-/// exists yet — an offer to link a server that already has the project.
-fn resolve_project_server(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
-    if let Some(bound) = bound_project_server(&project.id)? {
-        return Ok(bound);
+/// The nearest manifest at or above `start`. The walk stops at the first
+/// file found — a manifest without a `project.id` still ends the search.
+fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
+    let mut dir = start.to_path_buf();
+    loop {
+        match fs::read_to_string(dir.join(MANIFEST_FILE)) {
+            Ok(raw) => return Ok(Some((dir, raw))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if !dir.pop() {
+            return Ok(None);
+        }
     }
-    offer_project_link(project)
 }
 
-/// The binding recorded by `init` or a project-scoped `login`, if any.
-fn bound_project_server(
-    project_id: &str,
-) -> Result<Option<(String, ServerConfig)>, Box<dyn Error>> {
-    let Some(name) = read_project_binding(project_id)? else {
+/// `linked_project`, gated when the manifest lives in an ancestor directory:
+/// confirm before acting on it, so a stray subdirectory never silently
+/// targets the parent's project. Report-only callers (`whoami`) use
+/// `linked_project` directly.
+fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
+    let Some(project) = linked_project()? else {
         return Ok(None);
     };
-    let server =
-        read_server(&name).map_err(|error| format!("could not read server {name}: {error}"))?;
-    Ok(Some((name, server)))
+    let Some(dir) = &project.manifest_dir else {
+        return Ok(Some(project));
+    };
+
+    if !io::stdin().is_terminal() {
+        return Err(format!(
+            "no {MANIFEST_FILE} in this directory, but {} has one (project {}); rerun from \
+             there to use it",
+            dir.display(),
+            project.name
+        )
+        .into());
+    }
+    let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!(
+            "Use project {} from {}?",
+            project.name,
+            dir.join(MANIFEST_FILE).display()
+        ))
+        .default(true)
+        .interact()?;
+    Ok(confirmed.then_some(project))
+}
+
+/// The server for a linked project: the recorded binding, or — when none
+/// exists (or the bound entry is gone) — an offer to link a server that
+/// already has the project.
+fn resolve_project_server(
+    project: &LinkedProject,
+) -> Result<(String, ServerConfig), Box<dyn Error>> {
+    match project_binding(&project.id)? {
+        ProjectBinding::Bound(name, server) => Ok((name, server)),
+        ProjectBinding::Stale(stale) => {
+            eprintln!(
+                "note: project {} was linked to {stale}, which no longer exists on this \
+                 machine; looking for the project on your other servers",
+                project.name
+            );
+            offer_project_link(project)
+        }
+        ProjectBinding::Unbound => offer_project_link(project),
+    }
+}
+
+enum ProjectBinding {
+    Bound(String, ServerConfig),
+    /// A binding exists but its server entry is gone (removed config); the
+    /// name is kept for reporting.
+    Stale(String),
+    Unbound,
+}
+
+/// The binding recorded by `init` or a project-scoped `login`, checked
+/// against the server entries that still exist.
+fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dyn Error>> {
+    let Some(name) = read_project_binding(project_id)? else {
+        return Ok(ProjectBinding::Unbound);
+    };
+    match read_server(&name) {
+        Ok(server) => Ok(ProjectBinding::Bound(name, server)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ProjectBinding::Stale(name)),
+        Err(error) => Err(format!("could not read server {name}: {error}").into()),
+    }
 }
 
 /// No binding yet: quietly look for the project on every server this machine
 /// could act on — admin identities, or one scoped to this very project — and
 /// offer to link the match. This is why there is no `link` command.
 fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
-    let mut candidates: Vec<(String, ServerConfig)> = list_servers()?
-        .into_iter()
-        .filter(|(_, server)| server_has_project(server, project))
-        .collect();
+    let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
+    let mut unchecked: Vec<String> = Vec::new();
+    for (name, server) in list_servers()? {
+        match server_project_presence(&server, project) {
+            ProjectPresence::Present => candidates.push((name, server)),
+            ProjectPresence::Absent => {}
+            ProjectPresence::Unknown(reason) => unchecked.push(format!("{name} ({reason})")),
+        }
+    }
 
     match candidates.len() {
+        // Recommending `init` while a server couldn't answer would risk
+        // recreating a project that lives on the unreachable box.
+        0 if !unchecked.is_empty() => Err(format!(
+            "this project is not linked to a server on this machine, and no reachable server \
+             has project {} ({}); could not check {} — restore access there before running \
+             `railyard init`, which would create the project anew",
+            project.name,
+            project.id,
+            unchecked.join(", ")
+        )
+        .into()),
         0 => Err(format!(
             "this project is not linked to a server on this machine, and none of your servers \
              have project {} ({}); run `railyard init` to create it",
@@ -420,17 +524,33 @@ fn link_project(
     Ok((name, server))
 }
 
+enum ProjectPresence {
+    Present,
+    Absent,
+    /// Couldn't tell — the server was unreachable, the key rejected, or the
+    /// listing failed. The reason is kept for reporting.
+    Unknown(String),
+}
+
 /// Could this identity act on the project, and does its server have it?
-/// Unreachable servers and rejected keys simply aren't candidates.
-fn server_has_project(server: &ServerConfig, project: &LinkedProject) -> bool {
+fn server_project_presence(server: &ServerConfig, project: &LinkedProject) -> ProjectPresence {
     match http::whoami(server) {
         Ok(http::WhoamiOutcome::Identity(identity)) => match identity.project_id {
-            Some(scoped) => scoped == project.id,
-            None => http::list_projects(server)
-                .map(|projects| projects.iter().any(|p| p.id == project.id))
-                .unwrap_or(false),
+            Some(scoped) if scoped == project.id => ProjectPresence::Present,
+            Some(_) => ProjectPresence::Absent,
+            None => match http::list_projects(server) {
+                Ok(projects) if projects.iter().any(|p| p.id == project.id) => {
+                    ProjectPresence::Present
+                }
+                Ok(_) => ProjectPresence::Absent,
+                Err(error) => ProjectPresence::Unknown(format!("project listing failed: {error}")),
+            },
         },
-        _ => false,
+        Ok(http::WhoamiOutcome::Rejected(reason)) => {
+            ProjectPresence::Unknown(format!("key rejected {reason}"))
+        }
+        Ok(http::WhoamiOutcome::Unreachable) => ProjectPresence::Unknown("unreachable".to_string()),
+        Err(error) => ProjectPresence::Unknown(error.to_string()),
     }
 }
 
@@ -443,6 +563,37 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
         }
         Err(error) => return Err(error.into()),
     };
+
+    // Rerunning init in a linked directory is a no-op, not a chance to fork
+    // the project; moving to another server goes through `railyard unlink`.
+    if let Some(project) = &manifest.project
+        && let Some(id) = &project.id
+    {
+        match project_binding(id)? {
+            ProjectBinding::Bound(bound_name, _) => {
+                if let Some(requested) = &server_flag
+                    && *requested != bound_name
+                {
+                    return Err(format!(
+                        "project {} ({id}) is already linked to {bound_name}; run `railyard \
+                         unlink` first to link it to another server",
+                        project.name
+                    )
+                    .into());
+                }
+                println!(
+                    "Project {} ({id}) is already linked to {bound_name} — nothing to do.",
+                    project.name
+                );
+                println!("To link this project to another server, run `railyard unlink` first.");
+                return Ok(());
+            }
+            ProjectBinding::Stale(stale) => eprintln!(
+                "note: ignoring the link to {stale}, which no longer exists on this machine"
+            ),
+            ProjectBinding::Unbound => {}
+        }
+    }
 
     let project_name = resolve_project_name(name, &manifest, manifest_exists)?;
     let (server_name, server) = resolve_server_for_init(server_flag)?;
@@ -523,6 +674,28 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
         "Created project {} ({}) and linked {MANIFEST_FILE}",
         created.name, created.id
     );
+    Ok(())
+}
+
+/// Drop the recorded project→server binding. The manifest keeps its
+/// `project.id`, so `init` (or any project command) can link it again — to
+/// the same server or another one.
+fn unlink() -> Result<(), Box<dyn Error>> {
+    let project = confirmed_linked_project()?.ok_or(format!(
+        "no project linked in this directory ({MANIFEST_FILE} with a project.id)"
+    ))?;
+
+    match remove_project_binding(&project.id)? {
+        Some(server_name) => println!(
+            "Unlinked project {} ({}) from {server_name}; {MANIFEST_FILE} keeps its id, so \
+             `railyard init` can link it again",
+            project.name, project.id
+        ),
+        None => println!(
+            "Project {} ({}) is not linked to any server — nothing to do.",
+            project.name, project.id
+        ),
+    }
     Ok(())
 }
 
@@ -803,6 +976,14 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
         invite.server_url, redeemed.key_id, server_name
     );
 
+    // An admin identity covers every project on its server, so redeeming an
+    // admin invite makes any project-scoped entry for the same server
+    // redundant (the one way to hold both: project user first, promoted to
+    // admin later). Drop those entries and move their bindings here.
+    if invite.project.is_none() {
+        supersede_project_entries(&invite.server_url, &server_name)?;
+    }
+
     // A project-scoped invite says exactly which server owns the project, so
     // record the binding now — a cloned repo naming that project id then
     // resolves immediately, no `init`/`link` step.
@@ -814,6 +995,34 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
         );
     }
 
+    Ok(())
+}
+
+/// Remove project-scoped entries for `server_url` that the new admin entry
+/// makes redundant, repointing their project bindings at it. Entries whose
+/// scope can't be confirmed (unreachable, rejected key) are left alone.
+fn supersede_project_entries(server_url: &str, admin_entry: &str) -> Result<(), Box<dyn Error>> {
+    for (name, server) in list_servers()? {
+        if name == admin_entry || server.server_url != server_url {
+            continue;
+        }
+        let project_scoped = matches!(
+            http::whoami(&server),
+            Ok(http::WhoamiOutcome::Identity(identity)) if identity.project_id.is_some()
+        );
+        if !project_scoped {
+            continue;
+        }
+
+        let relinked = rebind_projects(&name, admin_entry)?;
+        remove_server(&name)?;
+        match relinked {
+            0 => println!("Removed project entry {name}; {admin_entry} covers it now"),
+            n => println!(
+                "Removed project entry {name} and relinked {n} project(s) to {admin_entry}"
+            ),
+        }
+    }
     Ok(())
 }
 
