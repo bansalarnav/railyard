@@ -55,11 +55,10 @@ impl BackgroundService for ApiService {
             let _ = tcp_shutdown.changed().await;
         });
         let mut admin_shutdown = shutdown.clone();
-        let admin = axum::serve(admin_listener, admin_routes(&state)).with_graceful_shutdown(
-            async move {
+        let admin =
+            axum::serve(admin_listener, admin_routes(&state)).with_graceful_shutdown(async move {
                 let _ = admin_shutdown.changed().await;
-            },
-        );
+            });
 
         let (tcp, admin) = tokio::join!(tcp, admin);
         tcp.expect("API service exited with error");
@@ -117,10 +116,7 @@ fn protected_routes() -> Router<ApiState> {
 
 /// Echo back who the verified key belongs to — the client stores only a key
 /// id locally, so this is how it learns (and proves) its own identity.
-async fn whoami(
-    State(state): State<ApiState>,
-    Extension(caller): Extension<AuthUser>,
-) -> Response {
+async fn whoami(State(state): State<ApiState>, Extension(caller): Extension<AuthUser>) -> Response {
     let project_name = match &caller.project_id {
         None => None,
         Some(id) => match state.db.project_by_id(id).await {
@@ -160,7 +156,11 @@ async fn create_project(
     Json(request): Json<CreateProjectRequest>,
 ) -> Response {
     if caller.project_id.is_some() {
-        return (StatusCode::FORBIDDEN, "only server admins can create projects").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "only server admins can create projects",
+        )
+            .into_response();
     }
     if !is_valid_project_name(&request.name) {
         return (
