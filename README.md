@@ -36,6 +36,6 @@ Container-side Cargo state is stored in the gitignored `.server/` directory at t
 
 ## Dev Routing
 
-The proxy listens on `0.0.0.0:3000` inside Docker (`127.0.0.1:3000` by default outside it). Requests whose path starts with `/railyard`, or whose hostname starts with the `railyard.` label, are forwarded to the internal API on `127.0.0.1:3001`. Other hostnames are matched against service upstreams configured via `RAILYARD_CONTAINER_UPSTREAM_<NAME>` env vars (e.g. `RAILYARD_CONTAINER_UPSTREAM_WEB=127.0.0.1:4000` routes `web.*` hosts there); unmatched requests get a 404.
+The proxy listens on `0.0.0.0:3000` by default. Requests whose path starts with `/railyard`, or whose hostname starts with the `railyard.` label, are forwarded to the internal API on `127.0.0.1:3001`. Other hostnames are matched against service upstreams configured via `RAILYARD_CONTAINER_UPSTREAM_<NAME>` env vars (e.g. `RAILYARD_CONTAINER_UPSTREAM_WEB=127.0.0.1:4000` routes `web.*` hosts there); unmatched requests get a 404.
 
 Use `RAILYARD_PROXY_HOST`, `RAILYARD_PROXY_PORT`, `RAILYARD_API_HOST`, and `RAILYARD_API_PORT` to change those bind addresses when needed.
