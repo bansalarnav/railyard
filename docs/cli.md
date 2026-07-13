@@ -150,7 +150,9 @@ with a new ID.
 
 `init` is idempotent: when the manifest's project already has a recorded binding it prints
 the existing link and exits 0, pointing at `railyard unlink` for moving to another server
-(`--server` naming a different server errors with the same hint).
+(`--server` naming a different server errors with the same hint). Run in a subdirectory of
+an existing project (a manifest in an ancestor directory), `init` asks for confirmation
+before scaffolding a separate nested project; non-interactive runs error.
 
 `init` is also where a server gets **chosen**. `--server <name>` wins. With exactly one
 known server, use it and print the target

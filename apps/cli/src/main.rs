@@ -559,6 +559,7 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
     let (mut manifest, manifest_exists) = match fs::read_to_string(manifest_path) {
         Ok(raw) => (railyard_manifest::parse(&raw)?, true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            confirm_nested_init()?;
             (RailyardManifest::default(), false)
         }
         Err(error) => return Err(error.into()),
@@ -674,6 +675,48 @@ fn init(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn
         "Created project {} ({}) and linked {MANIFEST_FILE}",
         created.name, created.id
     );
+    Ok(())
+}
+
+/// Scaffolding a manifest inside an existing project's tree is almost
+/// always `init` run from the wrong directory, so ask before creating a
+/// nested project.
+fn confirm_nested_init() -> Result<(), Box<dyn Error>> {
+    let cwd = env::current_dir()?;
+    let Some(parent) = cwd.parent() else {
+        return Ok(());
+    };
+    let Some((dir, raw)) = find_manifest(parent)? else {
+        return Ok(());
+    };
+    let found = dir.join(MANIFEST_FILE);
+    // A broken ancestor manifest shouldn't block init here; name the file
+    // and let the user decide.
+    let project = railyard_manifest::parse(&raw)
+        .ok()
+        .and_then(|manifest| manifest.project)
+        .map(|project| format!(" (project {})", project.name))
+        .unwrap_or_default();
+
+    if !io::stdin().is_terminal() {
+        return Err(format!(
+            "found {}{project} in a parent directory; init here would create a separate \
+             nested project — run it from that directory, or rerun interactively to confirm",
+            found.display()
+        )
+        .into());
+    }
+    let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!(
+            "Found {}{project} in a parent directory. Are you sure you want to create a \
+             separate project here?",
+            found.display()
+        ))
+        .default(false)
+        .interact()?;
+    if !confirmed {
+        return Err("init cancelled".into());
+    }
     Ok(())
 }
 
