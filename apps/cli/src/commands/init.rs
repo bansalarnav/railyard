@@ -2,25 +2,33 @@ use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
 use crate::config::{ServerConfig, list_servers, record_project_binding};
 use crate::http;
 use crate::resolve::{
-    MANIFEST_FILE, ProjectBinding, find_manifest, project_binding, resolve_server,
+    MANIFEST_FILE, ProjectBinding, find_manifest, manifest_in, parse_manifest, project_binding,
+    resolve_server,
 };
 
 pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
-    let manifest_path = Path::new(MANIFEST_FILE);
-    let (mut manifest, manifest_exists) = match fs::read_to_string(manifest_path) {
-        Ok(raw) => (railyard_manifest::parse(&raw)?, true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            confirm_nested_init()?;
-            (RailyardManifest::default(), false)
+    let cwd = env::current_dir()?;
+    let (manifest_path, mut manifest, manifest_raw) = match manifest_in(&cwd)? {
+        Some((path, raw)) => {
+            let manifest = parse_manifest(&path, &raw)?;
+            (path, manifest, Some(raw))
         }
-        Err(error) => return Err(error.into()),
+        None => {
+            confirm_nested_init(&cwd)?;
+            (
+                cwd.join(MANIFEST_FILE),
+                RailyardManifest::default(),
+                None,
+            )
+        }
     };
+    let manifest_exists = manifest_raw.is_some();
 
     // Rerunning init in a linked directory is a no-op, not a chance to fork
     // the project; moving to another server goes through `railyard unlink`.
@@ -90,7 +98,7 @@ pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(
 
             if choice == 0 {
                 manifest.link_project(&server_project.name, &server_project.id);
-                fs::write(manifest_path, manifest.to_json_string())?;
+                write_manifest(&manifest_path, &manifest, manifest_raw.as_deref())?;
                 record_project_binding(&server_project.id, &server_name)?;
                 println!(
                     "Linked this directory to project {} ({}) on {server_name}",
@@ -125,13 +133,41 @@ pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(
     let created = http::create_project(&server, &name_to_create, id_to_create)?;
 
     manifest.link_project(&created.name, &created.id);
-    fs::write(manifest_path, manifest.to_json_string())?;
+    write_manifest(&manifest_path, &manifest, manifest_raw.as_deref())?;
     record_project_binding(&created.id, &server_name)?;
 
     println!(
-        "Created project {} ({}) and linked {MANIFEST_FILE}",
-        created.name, created.id
+        "Created project {} ({}) and linked {}",
+        created.name,
+        created.id,
+        manifest_name(&manifest_path)
     );
+    Ok(())
+}
+
+fn manifest_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Linking re-serializes the whole manifest as plain JSON, so comments in a
+/// relaxed-syntax file can't survive; say so rather than dropping them
+/// silently.
+fn write_manifest(
+    path: &Path,
+    manifest: &RailyardManifest,
+    raw: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    fs::write(path, manifest.to_json_string())?;
+    if let Some(raw) = raw
+        && serde_json::from_str::<serde_json::Value>(raw).is_err()
+    {
+        eprintln!(
+            "note: rewrote {} as plain JSON; comments were not preserved",
+            manifest_name(path)
+        );
+    }
     Ok(())
 }
 

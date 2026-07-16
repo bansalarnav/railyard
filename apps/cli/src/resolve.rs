@@ -3,6 +3,7 @@
 //! rules every command applies.
 
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use railyard_manifest::{ManifestError, RailyardManifest};
 use std::error::Error;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -13,33 +14,62 @@ use crate::config::{
 };
 use crate::http;
 
+/// The spelling `init` writes; discovery also accepts the relaxed variants.
 pub(crate) const MANIFEST_FILE: &str = ".railyard.json";
+pub(crate) const MANIFEST_FILES: &[&str] =
+    &[".railyard.json", ".railyard.jsonc", ".railyard.json5"];
 
 pub(crate) struct LinkedProject {
     pub(crate) id: String,
     pub(crate) name: String,
     /// Set when the manifest was found in an ancestor directory, not here.
-    pub(crate) manifest_dir: Option<PathBuf>,
+    pub(crate) manifest_path: Option<PathBuf>,
 }
 
-/// The project this directory belongs to, if any: the nearest
-/// `.railyard.json` here or in an ancestor, carrying a `project.id` (both
-/// written by `railyard init`).
+/// The project this directory belongs to, if any: the nearest manifest here
+/// or in an ancestor, carrying a `project.id` (both written by
+/// `railyard init`).
 pub(crate) fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
     let cwd = env::current_dir()?;
-    let Some((dir, raw)) = find_manifest(&cwd)? else {
+    let Some((path, raw)) = find_manifest(&cwd)? else {
         return Ok(None);
     };
 
-    let manifest = railyard_manifest::parse(&raw)?;
-    let manifest_dir = (dir != cwd).then_some(dir);
+    let manifest = parse_manifest(&path, &raw)?;
+    let manifest_path = (path.parent() != Some(cwd.as_path())).then_some(path);
     Ok(manifest.project.and_then(|project| {
         project.id.map(|id| LinkedProject {
             id,
             name: project.name,
-            manifest_dir,
+            manifest_path,
         })
     }))
+}
+
+/// The manifest in `dir` itself, if any. Two spellings side by side would
+/// make which one wins a guess, so that is an error, not a pick.
+pub(crate) fn manifest_in(dir: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
+    let mut found: Vec<(PathBuf, String)> = Vec::new();
+    for name in MANIFEST_FILES {
+        match fs::read_to_string(dir.join(name)) {
+            Ok(raw) => found.push((dir.join(name), raw)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if found.len() > 1 {
+        let names: Vec<&str> = found
+            .iter()
+            .filter_map(|(path, _)| path.file_name().and_then(|name| name.to_str()))
+            .collect();
+        return Err(format!(
+            "multiple manifests in {}: {}; keep one and delete the rest",
+            dir.display(),
+            names.join(", ")
+        )
+        .into());
+    }
+    Ok(found.pop())
 }
 
 /// The nearest manifest at or above `start`. The walk stops at the first
@@ -47,14 +77,22 @@ pub(crate) fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> 
 pub(crate) fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
     let mut dir = start.to_path_buf();
     loop {
-        match fs::read_to_string(dir.join(MANIFEST_FILE)) {
-            Ok(raw) => return Ok(Some((dir, raw))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+        if let Some(found) = manifest_in(&dir)? {
+            return Ok(Some(found));
         }
         if !dir.pop() {
             return Ok(None);
         }
+    }
+}
+
+/// `.railyard.json` stays strict JSON; the `c`/`5` spellings get the
+/// relaxed grammar.
+pub(crate) fn parse_manifest(path: &Path, raw: &str) -> Result<RailyardManifest, ManifestError> {
+    if path.extension().is_some_and(|ext| ext == "json") {
+        railyard_manifest::parse(raw)
+    } else {
+        railyard_manifest::parse_relaxed(raw)
     }
 }
 
@@ -66,15 +104,15 @@ pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dy
     let Some(project) = linked_project()? else {
         return Ok(None);
     };
-    let Some(dir) = &project.manifest_dir else {
+    let Some(path) = &project.manifest_path else {
         return Ok(Some(project));
     };
 
     if !io::stdin().is_terminal() {
         return Err(format!(
-            "no {MANIFEST_FILE} in this directory, but {} has one (project {}); rerun from \
-             there to use it",
-            dir.display(),
+            "no manifest in this directory, but {} exists (project {}); rerun from its \
+             directory to use it",
+            path.display(),
             project.name
         )
         .into());
@@ -83,7 +121,7 @@ pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dy
         .with_prompt(format!(
             "Use project {} from {}?",
             project.name,
-            dir.join(MANIFEST_FILE).display()
+            path.display()
         ))
         .default(true)
         .interact()?;

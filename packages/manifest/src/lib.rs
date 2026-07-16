@@ -10,7 +10,7 @@ pub use validate::ValidationError;
 
 #[derive(Debug)]
 pub enum ManifestError {
-    Syntax(serde_json::Error),
+    Syntax(String),
     Shape { path: String, message: String },
     Invalid(Vec<ValidationError>),
 }
@@ -36,7 +36,20 @@ impl fmt::Display for ManifestError {
 
 impl std::error::Error for ManifestError {}
 pub fn parse(input: &str) -> Result<RailyardManifest, ManifestError> {
-    let raw: serde_json::Value = serde_json::from_str(input).map_err(ManifestError::Syntax)?;
+    let raw: serde_json::Value =
+        serde_json::from_str(input).map_err(|err| ManifestError::Syntax(err.to_string()))?;
+    parse_raw(raw)
+}
+
+/// `parse` for the relaxed spellings — JSONC and JSON5 (a superset of
+/// JSONC), so comments and trailing commas are fine.
+pub fn parse_relaxed(input: &str) -> Result<RailyardManifest, ManifestError> {
+    let raw: serde_json::Value =
+        json5::from_str(input).map_err(|err| ManifestError::Syntax(err.to_string()))?;
+    parse_raw(raw)
+}
+
+fn parse_raw(raw: serde_json::Value) -> Result<RailyardManifest, ManifestError> {
     let manifest = parse_value(raw)?;
 
     let mut errors = Vec::new();
@@ -57,11 +70,8 @@ pub fn parse(input: &str) -> Result<RailyardManifest, ManifestError> {
                     message,
                 ));
             }
-            Err(ManifestError::Syntax(err)) => {
-                errors.push(ValidationError::new(
-                    format!("environments.{name}"),
-                    err.to_string(),
-                ));
+            Err(ManifestError::Syntax(message)) => {
+                errors.push(ValidationError::new(format!("environments.{name}"), message));
             }
         }
     }
@@ -98,7 +108,8 @@ impl RailyardManifest {
             )]));
         }
 
-        let mut base = serde_json::to_value(self).map_err(ManifestError::Syntax)?;
+        let mut base = serde_json::to_value(self)
+            .map_err(|err| ManifestError::Syntax(err.to_string()))?;
         base.as_object_mut()
             .expect("manifest always serializes to an object")
             .remove("environments");
