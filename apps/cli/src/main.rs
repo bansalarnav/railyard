@@ -40,6 +40,11 @@ enum Commands {
         #[arg(long)]
         server: Option<String>,
     },
+    /// Validate the manifest and pack the repository for deploy
+    Up {
+        #[arg(long)]
+        server: Option<String>,
+    },
     /// Pick one of your servers and link this directory's project to it
     Link,
     /// Forget which server this directory's project is linked to
@@ -87,6 +92,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Login { target, name, user } => commands::login::run(&target, name, user),
         Commands::Whoami { server } => commands::whoami::run(server),
         Commands::Init { name, server } => commands::init::run(name, server),
+        Commands::Up { server } => commands::up::run(server),
         Commands::Link => commands::link::run(),
         Commands::Unlink => commands::unlink::run(),
         Commands::User { command } => match command {

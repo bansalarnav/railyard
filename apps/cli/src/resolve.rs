@@ -66,8 +66,14 @@ pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dy
     let Some(project) = linked_project()? else {
         return Ok(None);
     };
+    Ok(confirm_ancestor(&project)?.then_some(project))
+}
+
+/// The ancestor gate itself: true when the manifest is local or the user
+/// confirmed acting on the ancestor's project; errors when not a TTY.
+pub(crate) fn confirm_ancestor(project: &LinkedProject) -> Result<bool, Box<dyn Error>> {
     let Some(dir) = &project.manifest_dir else {
-        return Ok(Some(project));
+        return Ok(true);
     };
 
     if !io::stdin().is_terminal() {
@@ -79,15 +85,14 @@ pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dy
         )
         .into());
     }
-    let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+    Ok(Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt(format!(
             "Use project {} from {}?",
             project.name,
             dir.join(MANIFEST_FILE).display()
         ))
         .default(true)
-        .interact()?;
-    Ok(confirmed.then_some(project))
+        .interact()?)
 }
 
 /// The server for a linked project: the recorded binding, or — when none

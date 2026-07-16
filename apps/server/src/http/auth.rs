@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::body::{Body, to_bytes};
-use axum::extract::{Request, State};
+use axum::extract::{OriginalUri, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -129,19 +129,21 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| "signature is not base64 ed25519".to_string())?;
 
+    // The client signs the path it sent. Nested mounts (`/railyard/…`) strip
+    // their prefix from `parts.uri`, so verify against the original URI.
+    let uri = parts
+        .extensions
+        .get::<OriginalUri>()
+        .map(|original| &original.0)
+        .unwrap_or(&parts.uri);
     let host = match parts.headers.get("host").and_then(|v| v.to_str().ok()) {
         Some(host) => host.to_string(),
-        None => parts
-            .uri
+        None => uri
             .authority()
             .map(|authority| authority.to_string())
             .ok_or_else(|| "request has no host".to_string())?,
     };
-    let path_and_query = parts
-        .uri
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
 
     let canonical = canonical_request(
         key_id,
