@@ -5,13 +5,13 @@
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use railyard_manifest::{ManifestError, RailyardManifest};
 use std::error::Error;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
 use crate::config::{
     ServerConfig, list_servers, read_project_binding, read_server, record_project_binding,
 };
+use crate::context::ExecContext;
 use crate::http;
 
 /// The spelling `init` writes; discovery also accepts the relaxed variants.
@@ -100,7 +100,9 @@ pub(crate) fn parse_manifest(path: &Path, raw: &str) -> Result<RailyardManifest,
 /// confirm before acting on it, so a stray subdirectory never silently
 /// targets the parent's project. Report-only callers (`whoami`) use
 /// `linked_project` directly.
-pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
+pub(crate) fn confirmed_linked_project(
+    ctx: ExecContext,
+) -> Result<Option<LinkedProject>, Box<dyn Error>> {
     let Some(project) = linked_project()? else {
         return Ok(None);
     };
@@ -108,7 +110,7 @@ pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dy
         return Ok(Some(project));
     };
 
-    if !io::stdin().is_terminal() {
+    if !ctx.interactive {
         return Err(format!(
             "no manifest in this directory, but {} exists (project {}); rerun from its \
              directory to use it",
@@ -133,6 +135,7 @@ pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dy
 /// already has the project.
 pub(crate) fn resolve_project_server(
     project: &LinkedProject,
+    ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
     match project_binding(&project.id)? {
         ProjectBinding::Bound(name, server) => Ok((name, server)),
@@ -142,9 +145,9 @@ pub(crate) fn resolve_project_server(
                  machine; looking for the project on your other servers",
                 project.name
             );
-            offer_project_link(project)
+            offer_project_link(project, ctx)
         }
-        ProjectBinding::Unbound => offer_project_link(project),
+        ProjectBinding::Unbound => offer_project_link(project, ctx),
     }
 }
 
@@ -173,7 +176,10 @@ pub(crate) fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dy
 /// could act on — admin identities, or one scoped to this very project — and
 /// offer to link the match. `railyard link` is the explicit spelling of the
 /// same step, for when the user wants to pick the server themselves.
-fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
+fn offer_project_link(
+    project: &LinkedProject,
+    ctx: ExecContext,
+) -> Result<(String, ServerConfig), Box<dyn Error>> {
     let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
     let mut unchecked: Vec<String> = Vec::new();
     for (name, server) in list_servers()? {
@@ -204,7 +210,7 @@ fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig),
         .into()),
         1 => {
             let (name, server) = candidates.remove(0);
-            if !io::stdin().is_terminal() {
+            if !ctx.interactive {
                 return Err(format!(
                     "found project {} ({}) on server {name}, but this directory is not linked \
                      to it; rerun interactively to link",
@@ -226,7 +232,7 @@ fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig),
         }
         _ => {
             let names: Vec<String> = candidates.iter().map(|(name, _)| name.clone()).collect();
-            if !io::stdin().is_terminal() {
+            if !ctx.interactive {
                 return Err(format!(
                     "project {} ({}) exists on several servers ({}); rerun interactively to \
                      choose one to link",

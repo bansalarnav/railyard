@@ -5,11 +5,20 @@ use crate::config::list_servers;
 use crate::http;
 use crate::resolve::{ProjectBinding, linked_project, project_binding};
 
+/// Show every identity this machine holds and which one commands here would use
+#[derive(clap::Args)]
+pub(crate) struct Args {
+    /// Only check this server
+    #[arg(long)]
+    server: Option<String>,
+}
+
 /// One row per server entry, queried live so the answer reflects what the
 /// server believes (a revoked key shows up here, not in local config). The
 /// starred row is what commands in the current directory would use, computed
 /// with the same resolution rules those commands apply.
-pub(crate) fn run(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+pub(crate) fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    let server_flag = args.server;
     let mut servers = list_servers()?;
     if servers.is_empty() {
         return Err("no servers found; run `railyard login <blob>` first".into());
@@ -24,8 +33,8 @@ pub(crate) fn run(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     } else if let Some(project) = linked_project()? {
         // Report-only: whoami never prompts, so it checks the binding rather
         // than resolving (which may offer to link).
-        let via = match &project.manifest_dir {
-            Some(dir) => format!(", manifest in {}", dir.display()),
+        let via = match &project.manifest_path {
+            Some(path) => format!(", manifest at {}", path.display()),
             None => String::new(),
         };
         match project_binding(&project.id) {

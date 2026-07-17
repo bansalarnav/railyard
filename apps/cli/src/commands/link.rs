@@ -1,9 +1,8 @@
 use dialoguer::{Select, theme::ColorfulTheme};
 use std::error::Error;
-use std::io;
-use std::io::IsTerminal;
 
 use crate::config::list_servers;
+use crate::context::ExecContext;
 use crate::resolve::{
     MANIFEST_FILE, ProjectBinding, ProjectPresence, confirmed_linked_project, link_project,
     project_binding, server_project_presence,
@@ -14,8 +13,8 @@ use crate::resolve::{
 /// list is not narrowed to servers that have the project — the choice is
 /// checked after, so picking a server without it points at `init` instead of
 /// silently recording a bad binding.
-pub(crate) fn run() -> Result<(), Box<dyn Error>> {
-    let project = confirmed_linked_project()?.ok_or(format!(
+pub(crate) fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+    let project = confirmed_linked_project(ctx)?.ok_or(format!(
         "no project in this directory ({MANIFEST_FILE} with a project.id); run `railyard init` \
          to create one"
     ))?;
@@ -39,7 +38,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     if servers.is_empty() {
         return Err("no servers found; run `railyard login <blob>` first".into());
     }
-    if !io::stdin().is_terminal() {
+    if !ctx.interactive {
         return Err(format!(
             "`railyard link` picks a server interactively; rerun on a TTY (project {}, {})",
             project.name, project.id

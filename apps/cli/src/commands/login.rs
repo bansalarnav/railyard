@@ -10,15 +10,23 @@ use crate::config::{
 };
 use crate::http;
 
-pub(crate) fn run(
-    target: &str,
-    server_name: Option<String>,
-    user_flag: Option<String>,
-) -> Result<(), Box<dyn Error>> {
-    if target.starts_with(INVITE_BLOB_PREFIX) {
-        login(target, server_name)
+#[derive(clap::Args)]
+pub(crate) struct Args {
+    /// An invite blob, or an SSH target (user@host) to mint one on
+    target: String,
+    /// Local name for this server; defaults to the name embedded in the invite
+    #[arg(long)]
+    name: Option<String>,
+    /// User to create when logging in over SSH; defaults to your local username
+    #[arg(long)]
+    user: Option<String>,
+}
+
+pub(crate) fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    if args.target.starts_with(INVITE_BLOB_PREFIX) {
+        login(&args.target, args.name)
     } else {
-        login_ssh(target, server_name, user_flag)
+        login_ssh(&args.target, args.name, args.user)
     }
 }
 

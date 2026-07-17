@@ -1,11 +1,14 @@
 mod auth;
 mod commands;
 mod config;
+mod context;
 mod http;
 mod resolve;
 
 use clap::{Parser, Subcommand};
 use std::error::Error;
+
+use context::ExecContext;
 
 #[derive(Parser)]
 #[command(name = "railyard")]
@@ -17,62 +20,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Login {
-        /// An invite blob, or an SSH target (user@host) to mint one on
-        target: String,
-        /// Local name for this server; defaults to the name embedded in the invite
-        #[arg(long)]
-        name: Option<String>,
-        /// User to create when logging in over SSH; defaults to your local username
-        #[arg(long)]
-        user: Option<String>,
-    },
-    /// Show every identity this machine holds and which one commands here would use
-    Whoami {
-        /// Only check this server
-        #[arg(long)]
-        server: Option<String>,
-    },
-    /// Create a project on a server and link this directory to it
-    Init {
-        /// Project name; otherwise prompts when creating a manifest
-        name: Option<String>,
-        #[arg(long)]
-        server: Option<String>,
-    },
+    Login(commands::login::Args),
+    Whoami(commands::whoami::Args),
+    Init(commands::init::Args),
     /// Pick one of your servers and link this directory's project to it
     Link,
     /// Forget which server this directory's project is linked to
     Unlink,
-    User {
-        #[command(subcommand)]
-        command: UserCommand,
-    },
-}
-
-#[derive(Subcommand)]
-enum UserCommand {
-    /// Invite a user to the current project and print the invite blob
-    Add {
-        name: String,
-        /// Invite a server-wide admin instead of a project user
-        #[arg(long)]
-        admin: bool,
-        /// Use this server instead of resolving one
-        #[arg(long)]
-        server: Option<String>,
-    },
-    /// List a server's users (admin only)
-    List {
-        #[arg(long)]
-        server: Option<String>,
-    },
-    /// Remove a user and revoke its keys (admin only)
-    Remove {
-        name: String,
-        #[arg(long)]
-        server: Option<String>,
-    },
+    User(commands::user::Args),
 }
 
 fn main() {
@@ -83,20 +38,13 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    let ctx = ExecContext::detect();
     match Cli::parse().command {
-        Commands::Login { target, name, user } => commands::login::run(&target, name, user),
-        Commands::Whoami { server } => commands::whoami::run(server),
-        Commands::Init { name, server } => commands::init::run(name, server),
-        Commands::Link => commands::link::run(),
-        Commands::Unlink => commands::unlink::run(),
-        Commands::User { command } => match command {
-            UserCommand::Add {
-                name,
-                admin,
-                server,
-            } => commands::user::add(&name, admin, server),
-            UserCommand::List { server } => commands::user::list(server),
-            UserCommand::Remove { name, server } => commands::user::remove(&name, server),
-        },
+        Commands::Login(args) => commands::login::run(args),
+        Commands::Whoami(args) => commands::whoami::run(args),
+        Commands::Init(args) => commands::init::run(args, ctx),
+        Commands::Link => commands::link::run(ctx),
+        Commands::Unlink => commands::unlink::run(ctx),
+        Commands::User(args) => commands::user::run(args, ctx),
     }
 }

@@ -1,33 +1,76 @@
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use railyard_auth::unix_timestamp;
 use std::error::Error;
-use std::io;
-use std::io::IsTerminal;
 
 use crate::config::{ServerConfig, list_servers, read_server};
+use crate::context::ExecContext;
 use crate::http;
 use crate::resolve::{
     MANIFEST_FILE, confirmed_linked_project, resolve_project_server, resolve_server,
 };
 
+#[derive(clap::Args)]
+pub(crate) struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Invite a user to the current project and print the invite blob
+    Add {
+        name: String,
+        /// Invite a server-wide admin instead of a project user
+        #[arg(long)]
+        admin: bool,
+        /// Use this server instead of resolving one
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// List a server's users (admin only)
+    List {
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Remove a user and revoke its keys (admin only)
+    Remove {
+        name: String,
+        #[arg(long)]
+        server: Option<String>,
+    },
+}
+
+pub(crate) fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+    match args.command {
+        Command::Add {
+            name,
+            admin,
+            server,
+        } => add(&name, admin, server, ctx),
+        Command::List { server } => list(server),
+        Command::Remove { name, server } => remove(&name, server),
+    }
+}
+
 /// Invite to the project this directory is linked to; `--server` only pins
 /// which server entry to use, like every other project command. `--admin`
 /// switches to a server-wide (admin) invite. Either way the server only
 /// honors the request from an admin key.
-pub(crate) fn add(
+fn add(
     name: &str,
     admin: bool,
     server_flag: Option<String>,
+    ctx: ExecContext,
 ) -> Result<(), Box<dyn Error>> {
     if admin {
-        return add_admin(name, server_flag);
+        return add_admin(name, server_flag, ctx);
     }
 
-    let Some(project) = confirmed_linked_project()? else {
+    let Some(project) = confirmed_linked_project(ctx)? else {
         // No project to scope the invite to. On a TTY, offer the only other
         // invite this command can mint — but never silently escalate.
         if server_flag.is_none()
-            && io::stdin().is_terminal()
+            && ctx.interactive
             && Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt(format!(
                     "No project is linked in this directory. Create a server-wide admin \
@@ -36,7 +79,7 @@ pub(crate) fn add(
                 .default(false)
                 .interact()?
         {
-            return add_admin(name, None);
+            return add_admin(name, None, ctx);
         }
         return Err(format!(
             "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
@@ -51,7 +94,7 @@ pub(crate) fn add(
                 .map_err(|error| format!("could not read server {server_name}: {error}"))?;
             (server_name, server)
         }
-        None => resolve_project_server(&project)?,
+        None => resolve_project_server(&project, ctx)?,
     };
     let created = http::create_user(&server, name, Some(&project.id))?;
     println!(
@@ -62,8 +105,12 @@ pub(crate) fn add(
     Ok(())
 }
 
-fn add_admin(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
-    let (server_name, server) = resolve_admin_server(server_flag)?;
+fn add_admin(
+    name: &str,
+    server_flag: Option<String>,
+    ctx: ExecContext,
+) -> Result<(), Box<dyn Error>> {
+    let (server_name, server) = resolve_admin_server(server_flag, ctx)?;
     let created = http::create_user(&server, name, None)?;
     println!("Created admin user {name} with access to all of {server_name}.");
     print_invite(&created.invite_blob);
@@ -76,7 +123,7 @@ fn print_invite(blob: &str) {
     println!("{blob}");
 }
 
-pub(crate) fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     let (server_name, server) = resolve_server(server_flag)?;
     let users = http::list_users(&server)?;
     if users.is_empty() {
@@ -100,7 +147,7 @@ pub(crate) fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub(crate) fn remove(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+fn remove(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     let (server_name, server) = resolve_server(server_flag)?;
     if http::remove_user(&server, name)? {
         println!("Removed user {name} from {server_name} and revoked its keys.");
@@ -125,9 +172,10 @@ fn format_age(seconds: u64) -> String {
 /// pass --server.
 fn resolve_admin_server(
     explicit: Option<String>,
+    ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
     let servers = list_servers()?;
-    if explicit.is_some() || servers.len() < 2 || !io::stdin().is_terminal() {
+    if explicit.is_some() || servers.len() < 2 || !ctx.interactive {
         return resolve_server(explicit);
     }
 
