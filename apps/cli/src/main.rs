@@ -30,21 +30,22 @@ enum Commands {
     User(commands::user::Args),
 }
 
-fn main() {
-    if let Err(error) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run().await {
         eprintln!("{error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<(), Box<dyn Error>> {
     let ctx = ExecContext::detect();
     match Cli::parse().command {
-        Commands::Login(args) => commands::login::run(args),
-        Commands::Whoami(args) => commands::whoami::run(args),
-        Commands::Init(args) => commands::init::run(args, ctx),
-        Commands::Link => commands::link::run(ctx),
+        Commands::Login(args) => commands::login::run(args).await,
+        Commands::Whoami(args) => commands::whoami::run(args).await,
+        Commands::Init(args) => commands::init::run(args, ctx).await,
+        Commands::Link => commands::link::run(ctx).await,
         Commands::Unlink => commands::unlink::run(ctx),
-        Commands::User(args) => commands::user::run(args, ctx),
+        Commands::User(args) => commands::user::run(args, ctx).await,
     }
 }

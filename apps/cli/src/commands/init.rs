@@ -21,7 +21,7 @@ pub(crate) struct Args {
     server: Option<String>,
 }
 
-pub(crate) fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
     let Args {
         name,
         server: server_flag,
@@ -81,7 +81,7 @@ pub(crate) fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
     let mut id_to_create = existing_id.as_deref();
     let mut name_to_create = project_name.clone();
     if let Some(id) = &existing_id {
-        let projects = http::list_projects(&server)?;
+        let projects = http::list_projects(&server).await?;
         if let Some(server_project) = projects.into_iter().find(|project| project.id == *id) {
             if !ctx.interactive {
                 return Err(format!(
@@ -139,7 +139,7 @@ pub(crate) fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
             server.server_url
         );
     }
-    let created = http::create_project(&server, &name_to_create, id_to_create)?;
+    let created = http::create_project(&server, &name_to_create, id_to_create).await?;
 
     manifest.link_project(&created.name, &created.id);
     write_manifest(&manifest_path, &manifest, manifest_raw.as_deref())?;

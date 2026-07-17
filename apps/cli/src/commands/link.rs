@@ -13,7 +13,7 @@ use crate::resolve::{
 /// list is not narrowed to servers that have the project — the choice is
 /// checked after, so picking a server without it points at `init` instead of
 /// silently recording a bad binding.
-pub(crate) fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
     let project = confirmed_linked_project(ctx)?.ok_or(format!(
         "no project in this directory ({MANIFEST_FILE} with a project.id); run `railyard init` \
          to create one"
@@ -57,7 +57,7 @@ pub(crate) fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
         .interact()?;
     let (name, server) = servers.remove(choice);
 
-    match server_project_presence(&server, &project) {
+    match server_project_presence(&server, &project).await {
         ProjectPresence::Present => {
             link_project(&project, name, server)?;
             Ok(())

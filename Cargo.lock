@@ -2410,6 +2410,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "url",
 ]
 
@@ -2586,9 +2587,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
- "futures-util",
  "h2",
  "http",
  "http-body",

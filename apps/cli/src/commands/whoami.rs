@@ -17,7 +17,7 @@ pub(crate) struct Args {
 /// server believes (a revoked key shows up here, not in local config). The
 /// starred row is what commands in the current directory would use, computed
 /// with the same resolution rules those commands apply.
-pub(crate) fn run(args: Args) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let server_flag = args.server;
     let mut servers = list_servers()?;
     if servers.is_empty() {
@@ -80,7 +80,7 @@ pub(crate) fn run(args: Args) -> Result<(), Box<dyn Error>> {
         } else {
             " "
         };
-        let who = match http::whoami(server) {
+        let who = match http::whoami(server).await {
             Ok(http::WhoamiOutcome::Identity(identity)) => describe_identity(&identity),
             Ok(http::WhoamiOutcome::Rejected(reason)) => format!("key rejected {reason}"),
             Ok(http::WhoamiOutcome::Unreachable) => "unreachable".to_string(),

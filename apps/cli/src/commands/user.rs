@@ -40,15 +40,15 @@ enum Command {
     },
 }
 
-pub(crate) fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
     match args.command {
         Command::Add {
             name,
             admin,
             server,
-        } => add(&name, admin, server, ctx),
-        Command::List { server } => list(server),
-        Command::Remove { name, server } => remove(&name, server),
+        } => add(&name, admin, server, ctx).await,
+        Command::List { server } => list(server).await,
+        Command::Remove { name, server } => remove(&name, server).await,
     }
 }
 
@@ -56,14 +56,14 @@ pub(crate) fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
 /// which server entry to use, like every other project command. `--admin`
 /// switches to a server-wide (admin) invite. Either way the server only
 /// honors the request from an admin key.
-fn add(
+async fn add(
     name: &str,
     admin: bool,
     server_flag: Option<String>,
     ctx: ExecContext,
 ) -> Result<(), Box<dyn Error>> {
     if admin {
-        return add_admin(name, server_flag, ctx);
+        return add_admin(name, server_flag, ctx).await;
     }
 
     let Some(project) = confirmed_linked_project(ctx)? else {
@@ -79,7 +79,7 @@ fn add(
                 .default(false)
                 .interact()?
         {
-            return add_admin(name, None, ctx);
+            return add_admin(name, None, ctx).await;
         }
         return Err(format!(
             "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
@@ -94,9 +94,9 @@ fn add(
                 .map_err(|error| format!("could not read server {server_name}: {error}"))?;
             (server_name, server)
         }
-        None => resolve_project_server(&project, ctx)?,
+        None => resolve_project_server(&project, ctx).await?,
     };
-    let created = http::create_user(&server, name, Some(&project.id))?;
+    let created = http::create_user(&server, name, Some(&project.id)).await?;
     println!(
         "Created user {name} scoped to project {} on {server_name}.",
         project.name
@@ -105,13 +105,13 @@ fn add(
     Ok(())
 }
 
-fn add_admin(
+async fn add_admin(
     name: &str,
     server_flag: Option<String>,
     ctx: ExecContext,
 ) -> Result<(), Box<dyn Error>> {
-    let (server_name, server) = resolve_admin_server(server_flag, ctx)?;
-    let created = http::create_user(&server, name, None)?;
+    let (server_name, server) = resolve_admin_server(server_flag, ctx).await?;
+    let created = http::create_user(&server, name, None).await?;
     println!("Created admin user {name} with access to all of {server_name}.");
     print_invite(&created.invite_blob);
     Ok(())
@@ -123,9 +123,9 @@ fn print_invite(blob: &str) {
     println!("{blob}");
 }
 
-fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+async fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     let (server_name, server) = resolve_server(server_flag)?;
-    let users = http::list_users(&server)?;
+    let users = http::list_users(&server).await?;
     if users.is_empty() {
         println!("No users on {server_name}.");
         return Ok(());
@@ -147,9 +147,9 @@ fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn remove(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+async fn remove(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     let (server_name, server) = resolve_server(server_flag)?;
-    if http::remove_user(&server, name)? {
+    if http::remove_user(&server, name).await? {
         println!("Removed user {name} from {server_name} and revoked its keys.");
     } else {
         println!("No user named {name} on {server_name}.");
@@ -170,7 +170,7 @@ fn format_age(seconds: u64) -> String {
 /// server. With several, a TTY narrows to the entries whose identity is an
 /// admin (only admins can mint invites) and asks; non-interactive runs must
 /// pass --server.
-fn resolve_admin_server(
+async fn resolve_admin_server(
     explicit: Option<String>,
     ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
@@ -179,10 +179,12 @@ fn resolve_admin_server(
         return resolve_server(explicit);
     }
 
-    let mut candidates: Vec<(String, ServerConfig)> = servers
-        .into_iter()
-        .filter(|(_, server)| is_admin_identity(server))
-        .collect();
+    let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
+    for (name, server) in servers {
+        if is_admin_identity(&server).await {
+            candidates.push((name, server));
+        }
+    }
     match candidates.len() {
         0 => Err(
             "none of your servers answered with an admin identity, and only admins can mint \
@@ -220,9 +222,9 @@ fn resolve_admin_server(
 }
 
 /// Does this entry's key currently prove an admin on its server?
-fn is_admin_identity(server: &ServerConfig) -> bool {
+async fn is_admin_identity(server: &ServerConfig) -> bool {
     matches!(
-        http::whoami(server),
+        http::whoami(server).await,
         Ok(http::WhoamiOutcome::Identity(identity)) if identity.project_id.is_none()
     )
 }

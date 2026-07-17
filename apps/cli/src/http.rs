@@ -5,14 +5,13 @@ use railyard_auth::{
     REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION, USERS_PATH,
     UserSummary, WHOAMI_PATH, WhoamiResponse,
 };
-use reqwest::blocking::{Client, Response};
-use reqwest::{Method, StatusCode, Url};
+use reqwest::{Client, Method, Response, StatusCode, Url};
 use std::error::Error;
 
 use crate::auth::sign_request;
 use crate::config::{ServerConfig, read_signing_key};
 
-pub(crate) fn redeem_invite(
+pub(crate) async fn redeem_invite(
     invite: &InvitePayload,
     public_key: &str,
 ) -> Result<RedeemInviteResponse, Box<dyn Error>> {
@@ -25,25 +24,29 @@ pub(crate) fn redeem_invite(
             invite_token: invite.invite_token.clone(),
             public_key: public_key.to_string(),
         })
-        .send()?;
+        .send()
+        .await?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!("invite redemption failed ({status}): {body}").into());
     }
 
-    Ok(response.json()?)
+    Ok(response.json().await?)
 }
 
-pub(crate) fn list_projects(server: &ServerConfig) -> Result<Vec<ProjectSummary>, Box<dyn Error>> {
-    let response =
-        signed_request(server, Method::GET, PROJECTS_PATH, Vec::new())?.error_for_status()?;
-    let listed: ListProjectsResponse = response.json()?;
+pub(crate) async fn list_projects(
+    server: &ServerConfig,
+) -> Result<Vec<ProjectSummary>, Box<dyn Error>> {
+    let response = signed_request(server, Method::GET, PROJECTS_PATH, Vec::new())
+        .await?
+        .error_for_status()?;
+    let listed: ListProjectsResponse = response.json().await?;
     Ok(listed.projects)
 }
 
-pub(crate) fn create_project(
+pub(crate) async fn create_project(
     server: &ServerConfig,
     name: &str,
     id: Option<&str>,
@@ -52,18 +55,18 @@ pub(crate) fn create_project(
         name: name.to_string(),
         id: id.map(ToOwned::to_owned),
     })?;
-    let response = signed_request(server, Method::POST, PROJECTS_PATH, body)?;
+    let response = signed_request(server, Method::POST, PROJECTS_PATH, body).await?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!("project creation failed ({status}): {body}").into());
     }
 
-    Ok(response.json()?)
+    Ok(response.json().await?)
 }
 
-pub(crate) fn create_user(
+pub(crate) async fn create_user(
     server: &ServerConfig,
     name: &str,
     project_id: Option<&str>,
@@ -72,40 +75,40 @@ pub(crate) fn create_user(
         name: name.to_string(),
         project_id: project_id.map(ToOwned::to_owned),
     })?;
-    let response = signed_request(server, Method::POST, USERS_PATH, body)?;
+    let response = signed_request(server, Method::POST, USERS_PATH, body).await?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!("user creation failed ({status}): {body}").into());
     }
 
-    Ok(response.json()?)
+    Ok(response.json().await?)
 }
 
-pub(crate) fn list_users(server: &ServerConfig) -> Result<Vec<UserSummary>, Box<dyn Error>> {
-    let response = signed_request(server, Method::GET, USERS_PATH, Vec::new())?;
+pub(crate) async fn list_users(server: &ServerConfig) -> Result<Vec<UserSummary>, Box<dyn Error>> {
+    let response = signed_request(server, Method::GET, USERS_PATH, Vec::new()).await?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().unwrap_or_default();
+        let body = response.text().await.unwrap_or_default();
         return Err(format!("user listing failed ({status}): {body}").into());
     }
 
-    let listed: ListUsersResponse = response.json()?;
+    let listed: ListUsersResponse = response.json().await?;
     Ok(listed.users)
 }
 
 /// Ok(false) means the server knows no such user.
-pub(crate) fn remove_user(server: &ServerConfig, name: &str) -> Result<bool, Box<dyn Error>> {
+pub(crate) async fn remove_user(server: &ServerConfig, name: &str) -> Result<bool, Box<dyn Error>> {
     let path = format!("{USERS_PATH}/{name}");
-    let response = signed_request(server, Method::DELETE, &path, Vec::new())?;
+    let response = signed_request(server, Method::DELETE, &path, Vec::new()).await?;
 
     match response.status() {
         StatusCode::NO_CONTENT => Ok(true),
         StatusCode::NOT_FOUND => Ok(false),
         status => {
-            let body = response.text().unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             Err(format!("user removal failed ({status}): {body}").into())
         }
     }
@@ -118,8 +121,8 @@ pub(crate) enum WhoamiOutcome {
     Unreachable,
 }
 
-pub(crate) fn whoami(server: &ServerConfig) -> Result<WhoamiOutcome, Box<dyn Error>> {
-    let response = match signed_request(server, Method::GET, WHOAMI_PATH, Vec::new()) {
+pub(crate) async fn whoami(server: &ServerConfig) -> Result<WhoamiOutcome, Box<dyn Error>> {
+    let response = match signed_request(server, Method::GET, WHOAMI_PATH, Vec::new()).await {
         Ok(response) => response,
         Err(error) => {
             let network = error
@@ -134,15 +137,15 @@ pub(crate) fn whoami(server: &ServerConfig) -> Result<WhoamiOutcome, Box<dyn Err
 
     let status = response.status();
     if status.is_success() {
-        return Ok(WhoamiOutcome::Identity(response.json()?));
+        return Ok(WhoamiOutcome::Identity(response.json().await?));
     }
     Ok(WhoamiOutcome::Rejected(format!(
         "({status}) {}",
-        response.text().unwrap_or_default().trim()
+        response.text().await.unwrap_or_default().trim()
     )))
 }
 
-fn signed_request(
+async fn signed_request(
     server: &ServerConfig,
     method: Method,
     suffix: &str,
@@ -185,7 +188,7 @@ fn signed_request(
             .body(body);
     }
 
-    Ok(request.send()?)
+    Ok(request.send().await?)
 }
 
 fn control_plane_api_url(mut base_url: Url, suffix: &str) -> Result<Url, Box<dyn Error>> {

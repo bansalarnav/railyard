@@ -133,7 +133,7 @@ pub(crate) fn confirmed_linked_project(
 /// The server for a linked project: the recorded binding, or — when none
 /// exists (or the bound entry is gone) — an offer to link a server that
 /// already has the project.
-pub(crate) fn resolve_project_server(
+pub(crate) async fn resolve_project_server(
     project: &LinkedProject,
     ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
@@ -145,9 +145,9 @@ pub(crate) fn resolve_project_server(
                  machine; looking for the project on your other servers",
                 project.name
             );
-            offer_project_link(project, ctx)
+            offer_project_link(project, ctx).await
         }
-        ProjectBinding::Unbound => offer_project_link(project, ctx),
+        ProjectBinding::Unbound => offer_project_link(project, ctx).await,
     }
 }
 
@@ -176,14 +176,14 @@ pub(crate) fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dy
 /// could act on — admin identities, or one scoped to this very project — and
 /// offer to link the match. `railyard link` is the explicit spelling of the
 /// same step, for when the user wants to pick the server themselves.
-fn offer_project_link(
+async fn offer_project_link(
     project: &LinkedProject,
     ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
     let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
     let mut unchecked: Vec<String> = Vec::new();
     for (name, server) in list_servers()? {
-        match server_project_presence(&server, project) {
+        match server_project_presence(&server, project).await {
             ProjectPresence::Present => candidates.push((name, server)),
             ProjectPresence::Absent => {}
             ProjectPresence::Unknown(reason) => unchecked.push(format!("{name} ({reason})")),
@@ -279,15 +279,15 @@ pub(crate) enum ProjectPresence {
 }
 
 /// Could this identity act on the project, and does its server have it?
-pub(crate) fn server_project_presence(
+pub(crate) async fn server_project_presence(
     server: &ServerConfig,
     project: &LinkedProject,
 ) -> ProjectPresence {
-    match http::whoami(server) {
+    match http::whoami(server).await {
         Ok(http::WhoamiOutcome::Identity(identity)) => match identity.project_id {
             Some(scoped) if scoped == project.id => ProjectPresence::Present,
             Some(_) => ProjectPresence::Absent,
-            None => match http::list_projects(server) {
+            None => match http::list_projects(server).await {
                 Ok(projects) if projects.iter().any(|p| p.id == project.id) => {
                     ProjectPresence::Present
                 }
