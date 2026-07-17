@@ -1,26 +1,43 @@
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use railyard_manifest::RailyardManifest;
 use std::error::Error;
-use std::io::IsTerminal;
 use std::path::Path;
-use std::{env, fs, io};
+use std::{env, fs};
 
 use crate::config::{ServerConfig, list_servers, record_project_binding};
+use crate::context::ExecContext;
 use crate::http;
 use crate::resolve::{
-    MANIFEST_FILE, ProjectBinding, find_manifest, project_binding, resolve_server,
+    MANIFEST_FILE, ProjectBinding, find_manifest, manifest_in, parse_manifest, project_binding,
+    resolve_server,
 };
 
-pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
-    let manifest_path = Path::new(MANIFEST_FILE);
-    let (mut manifest, manifest_exists) = match fs::read_to_string(manifest_path) {
-        Ok(raw) => (railyard_manifest::parse(&raw)?, true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            confirm_nested_init()?;
-            (RailyardManifest::default(), false)
+/// Create a project on a server and link this directory to it
+#[derive(clap::Args)]
+pub(crate) struct Args {
+    /// Project name; otherwise prompts when creating a manifest
+    name: Option<String>,
+    #[arg(long)]
+    server: Option<String>,
+}
+
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+    let Args {
+        name,
+        server: server_flag,
+    } = args;
+    let cwd = env::current_dir()?;
+    let (manifest_path, mut manifest, manifest_raw) = match manifest_in(&cwd)? {
+        Some((path, raw)) => {
+            let manifest = parse_manifest(&path, &raw)?;
+            (path, manifest, Some(raw))
         }
-        Err(error) => return Err(error.into()),
+        None => {
+            confirm_nested_init(&cwd, ctx)?;
+            (cwd.join(MANIFEST_FILE), RailyardManifest::default(), None)
+        }
     };
+    let manifest_exists = manifest_raw.is_some();
 
     // Rerunning init in a linked directory is a no-op, not a chance to fork
     // the project; moving to another server goes through `railyard unlink`.
@@ -53,8 +70,8 @@ pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(
         }
     }
 
-    let project_name = resolve_project_name(name, &manifest, manifest_exists)?;
-    let (server_name, server) = resolve_server_for_init(server_flag)?;
+    let project_name = resolve_project_name(name, &manifest, manifest_exists, ctx)?;
+    let (server_name, server) = resolve_server_for_init(server_flag, ctx)?;
 
     // A manifest can arrive with a project.id already in it — a cloned repo
     // someone else deployed, or a project being brought to a second server.
@@ -64,9 +81,9 @@ pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(
     let mut id_to_create = existing_id.as_deref();
     let mut name_to_create = project_name.clone();
     if let Some(id) = &existing_id {
-        let projects = http::list_projects(&server)?;
+        let projects = http::list_projects(&server).await?;
         if let Some(server_project) = projects.into_iter().find(|project| project.id == *id) {
-            if !io::stdin().is_terminal() {
+            if !ctx.interactive {
                 return Err(format!(
                     "project {} ({id}) already exists on {server_name}; rerun `railyard init` \
                      interactively to link this directory or create a new project",
@@ -90,7 +107,7 @@ pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(
 
             if choice == 0 {
                 manifest.link_project(&server_project.name, &server_project.id);
-                fs::write(manifest_path, manifest.to_json_string())?;
+                write_manifest(&manifest_path, &manifest, manifest_raw.as_deref())?;
                 record_project_binding(&server_project.id, &server_name)?;
                 println!(
                     "Linked this directory to project {} ({}) on {server_name}",
@@ -122,40 +139,66 @@ pub(crate) fn run(name: Option<String>, server_flag: Option<String>) -> Result<(
             server.server_url
         );
     }
-    let created = http::create_project(&server, &name_to_create, id_to_create)?;
+    let created = http::create_project(&server, &name_to_create, id_to_create).await?;
 
     manifest.link_project(&created.name, &created.id);
-    fs::write(manifest_path, manifest.to_json_string())?;
+    write_manifest(&manifest_path, &manifest, manifest_raw.as_deref())?;
     record_project_binding(&created.id, &server_name)?;
 
     println!(
-        "Created project {} ({}) and linked {MANIFEST_FILE}",
-        created.name, created.id
+        "Created project {} ({}) and linked {}",
+        created.name,
+        created.id,
+        manifest_name(&manifest_path)
     );
+    Ok(())
+}
+
+fn manifest_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Linking re-serializes the whole manifest as plain JSON, so comments in a
+/// relaxed-syntax file can't survive; say so rather than dropping them
+/// silently.
+fn write_manifest(
+    path: &Path,
+    manifest: &RailyardManifest,
+    raw: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    fs::write(path, manifest.to_json_string())?;
+    if let Some(raw) = raw
+        && serde_json::from_str::<serde_json::Value>(raw).is_err()
+    {
+        eprintln!(
+            "note: rewrote {} as plain JSON; comments were not preserved",
+            manifest_name(path)
+        );
+    }
     Ok(())
 }
 
 /// Scaffolding a manifest inside an existing project's tree is almost
 /// always `init` run from the wrong directory, so ask before creating a
 /// nested project.
-fn confirm_nested_init() -> Result<(), Box<dyn Error>> {
-    let cwd = env::current_dir()?;
+fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
     let Some(parent) = cwd.parent() else {
         return Ok(());
     };
-    let Some((dir, raw)) = find_manifest(parent)? else {
+    let Some((found, raw)) = find_manifest(parent)? else {
         return Ok(());
     };
-    let found = dir.join(MANIFEST_FILE);
     // A broken ancestor manifest shouldn't block init here; name the file
     // and let the user decide.
-    let project = railyard_manifest::parse(&raw)
+    let project = parse_manifest(&found, &raw)
         .ok()
         .and_then(|manifest| manifest.project)
         .map(|project| format!(" (project {})", project.name))
         .unwrap_or_default();
 
-    if !io::stdin().is_terminal() {
+    if !ctx.interactive {
         return Err(format!(
             "found {}{project} in a parent directory; init here would create a separate \
              nested project — run it from that directory, or rerun interactively to confirm",
@@ -184,6 +227,7 @@ fn resolve_project_name(
     explicit: Option<String>,
     manifest: &RailyardManifest,
     manifest_exists: bool,
+    ctx: ExecContext,
 ) -> Result<String, Box<dyn Error>> {
     let manifest_name = manifest.project.as_ref().map(|p| p.name.clone());
 
@@ -215,7 +259,7 @@ fn resolve_project_name(
                 .into(),
         );
     }
-    if !manifest_exists && io::stdin().is_terminal() {
+    if !manifest_exists && ctx.interactive {
         return Ok(Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Project name")
             .default(name)
@@ -242,9 +286,10 @@ fn sanitize_project_name(raw: &str) -> String {
 /// prompt: with several servers and no `--server`, show a picker on a TTY.
 fn resolve_server_for_init(
     explicit: Option<String>,
+    ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
     let mut servers = list_servers()?;
-    if explicit.is_some() || servers.len() < 2 || !io::stdin().is_terminal() {
+    if explicit.is_some() || servers.len() < 2 || !ctx.interactive {
         return resolve_server(explicit);
     }
 

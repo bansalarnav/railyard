@@ -3,43 +3,73 @@
 //! rules every command applies.
 
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use railyard_manifest::{ManifestError, RailyardManifest};
 use std::error::Error;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
 use crate::config::{
     ServerConfig, list_servers, read_project_binding, read_server, record_project_binding,
 };
+use crate::context::ExecContext;
 use crate::http;
 
+/// The spelling `init` writes; discovery also accepts the relaxed variants.
 pub(crate) const MANIFEST_FILE: &str = ".railyard.json";
+pub(crate) const MANIFEST_FILES: &[&str] =
+    &[".railyard.json", ".railyard.jsonc", ".railyard.json5"];
 
 pub(crate) struct LinkedProject {
     pub(crate) id: String,
     pub(crate) name: String,
     /// Set when the manifest was found in an ancestor directory, not here.
-    pub(crate) manifest_dir: Option<PathBuf>,
+    pub(crate) manifest_path: Option<PathBuf>,
 }
 
-/// The project this directory belongs to, if any: the nearest
-/// `.railyard.json` here or in an ancestor, carrying a `project.id` (both
-/// written by `railyard init`).
+/// The project this directory belongs to, if any: the nearest manifest here
+/// or in an ancestor, carrying a `project.id` (both written by
+/// `railyard init`).
 pub(crate) fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
     let cwd = env::current_dir()?;
-    let Some((dir, raw)) = find_manifest(&cwd)? else {
+    let Some((path, raw)) = find_manifest(&cwd)? else {
         return Ok(None);
     };
 
-    let manifest = railyard_manifest::parse(&raw)?;
-    let manifest_dir = (dir != cwd).then_some(dir);
+    let manifest = parse_manifest(&path, &raw)?;
+    let manifest_path = (path.parent() != Some(cwd.as_path())).then_some(path);
     Ok(manifest.project.and_then(|project| {
         project.id.map(|id| LinkedProject {
             id,
             name: project.name,
-            manifest_dir,
+            manifest_path,
         })
     }))
+}
+
+/// The manifest in `dir` itself, if any. Two spellings side by side would
+/// make which one wins a guess, so that is an error, not a pick.
+pub(crate) fn manifest_in(dir: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
+    let mut found: Vec<(PathBuf, String)> = Vec::new();
+    for name in MANIFEST_FILES {
+        match fs::read_to_string(dir.join(name)) {
+            Ok(raw) => found.push((dir.join(name), raw)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if found.len() > 1 {
+        let names: Vec<&str> = found
+            .iter()
+            .filter_map(|(path, _)| path.file_name().and_then(|name| name.to_str()))
+            .collect();
+        return Err(format!(
+            "multiple manifests in {}: {}; keep one and delete the rest",
+            dir.display(),
+            names.join(", ")
+        )
+        .into());
+    }
+    Ok(found.pop())
 }
 
 /// The nearest manifest at or above `start`. The walk stops at the first
@@ -47,10 +77,8 @@ pub(crate) fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> 
 pub(crate) fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
     let mut dir = start.to_path_buf();
     loop {
-        match fs::read_to_string(dir.join(MANIFEST_FILE)) {
-            Ok(raw) => return Ok(Some((dir, raw))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+        if let Some(found) = manifest_in(&dir)? {
+            return Ok(Some(found));
         }
         if !dir.pop() {
             return Ok(None);
@@ -58,29 +86,44 @@ pub(crate) fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>, B
     }
 }
 
+/// `.railyard.json` stays strict JSON; the `c`/`5` spellings get the
+/// relaxed grammar.
+pub(crate) fn parse_manifest(path: &Path, raw: &str) -> Result<RailyardManifest, ManifestError> {
+    if path.extension().is_some_and(|ext| ext == "json") {
+        railyard_manifest::parse(raw)
+    } else {
+        railyard_manifest::parse_relaxed(raw)
+    }
+}
+
 /// `linked_project`, gated when the manifest lives in an ancestor directory:
 /// confirm before acting on it, so a stray subdirectory never silently
 /// targets the parent's project. Report-only callers (`whoami`) use
 /// `linked_project` directly.
-pub(crate) fn confirmed_linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
+pub(crate) fn confirmed_linked_project(
+    ctx: ExecContext,
+) -> Result<Option<LinkedProject>, Box<dyn Error>> {
     let Some(project) = linked_project()? else {
         return Ok(None);
     };
-    Ok(confirm_ancestor(&project)?.then_some(project))
+    Ok(confirm_ancestor(&project, ctx)?.then_some(project))
 }
 
 /// The ancestor gate itself: true when the manifest is local or the user
-/// confirmed acting on the ancestor's project; errors when not a TTY.
-pub(crate) fn confirm_ancestor(project: &LinkedProject) -> Result<bool, Box<dyn Error>> {
-    let Some(dir) = &project.manifest_dir else {
+/// confirmed acting on the ancestor's project; errors when not interactive.
+pub(crate) fn confirm_ancestor(
+    project: &LinkedProject,
+    ctx: ExecContext,
+) -> Result<bool, Box<dyn Error>> {
+    let Some(path) = &project.manifest_path else {
         return Ok(true);
     };
 
-    if !io::stdin().is_terminal() {
+    if !ctx.interactive {
         return Err(format!(
-            "no {MANIFEST_FILE} in this directory, but {} has one (project {}); rerun from \
-             there to use it",
-            dir.display(),
+            "no manifest in this directory, but {} exists (project {}); rerun from its \
+             directory to use it",
+            path.display(),
             project.name
         )
         .into());
@@ -89,7 +132,7 @@ pub(crate) fn confirm_ancestor(project: &LinkedProject) -> Result<bool, Box<dyn 
         .with_prompt(format!(
             "Use project {} from {}?",
             project.name,
-            dir.join(MANIFEST_FILE).display()
+            path.display()
         ))
         .default(true)
         .interact()?)
@@ -98,8 +141,9 @@ pub(crate) fn confirm_ancestor(project: &LinkedProject) -> Result<bool, Box<dyn 
 /// The server for a linked project: the recorded binding, or — when none
 /// exists (or the bound entry is gone) — an offer to link a server that
 /// already has the project.
-pub(crate) fn resolve_project_server(
+pub(crate) async fn resolve_project_server(
     project: &LinkedProject,
+    ctx: ExecContext,
 ) -> Result<(String, ServerConfig), Box<dyn Error>> {
     match project_binding(&project.id)? {
         ProjectBinding::Bound(name, server) => Ok((name, server)),
@@ -109,9 +153,9 @@ pub(crate) fn resolve_project_server(
                  machine; looking for the project on your other servers",
                 project.name
             );
-            offer_project_link(project)
+            offer_project_link(project, ctx).await
         }
-        ProjectBinding::Unbound => offer_project_link(project),
+        ProjectBinding::Unbound => offer_project_link(project, ctx).await,
     }
 }
 
@@ -140,11 +184,14 @@ pub(crate) fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dy
 /// could act on — admin identities, or one scoped to this very project — and
 /// offer to link the match. `railyard link` is the explicit spelling of the
 /// same step, for when the user wants to pick the server themselves.
-fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig), Box<dyn Error>> {
+async fn offer_project_link(
+    project: &LinkedProject,
+    ctx: ExecContext,
+) -> Result<(String, ServerConfig), Box<dyn Error>> {
     let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
     let mut unchecked: Vec<String> = Vec::new();
     for (name, server) in list_servers()? {
-        match server_project_presence(&server, project) {
+        match server_project_presence(&server, project).await {
             ProjectPresence::Present => candidates.push((name, server)),
             ProjectPresence::Absent => {}
             ProjectPresence::Unknown(reason) => unchecked.push(format!("{name} ({reason})")),
@@ -171,7 +218,7 @@ fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig),
         .into()),
         1 => {
             let (name, server) = candidates.remove(0);
-            if !io::stdin().is_terminal() {
+            if !ctx.interactive {
                 return Err(format!(
                     "found project {} ({}) on server {name}, but this directory is not linked \
                      to it; rerun interactively to link",
@@ -193,7 +240,7 @@ fn offer_project_link(project: &LinkedProject) -> Result<(String, ServerConfig),
         }
         _ => {
             let names: Vec<String> = candidates.iter().map(|(name, _)| name.clone()).collect();
-            if !io::stdin().is_terminal() {
+            if !ctx.interactive {
                 return Err(format!(
                     "project {} ({}) exists on several servers ({}); rerun interactively to \
                      choose one to link",
@@ -240,15 +287,15 @@ pub(crate) enum ProjectPresence {
 }
 
 /// Could this identity act on the project, and does its server have it?
-pub(crate) fn server_project_presence(
+pub(crate) async fn server_project_presence(
     server: &ServerConfig,
     project: &LinkedProject,
 ) -> ProjectPresence {
-    match http::whoami(server) {
+    match http::whoami(server).await {
         Ok(http::WhoamiOutcome::Identity(identity)) => match identity.project_id {
             Some(scoped) if scoped == project.id => ProjectPresence::Present,
             Some(_) => ProjectPresence::Absent,
-            None => match http::list_projects(server) {
+            None => match http::list_projects(server).await {
                 Ok(projects) if projects.iter().any(|p| p.id == project.id) => {
                     ProjectPresence::Present
                 }

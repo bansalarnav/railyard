@@ -6,25 +6,36 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::{env, fs};
 
+use crate::context::ExecContext;
 use crate::resolve::{
-    LinkedProject, MANIFEST_FILE, ProjectPresence, confirm_ancestor, resolve_project_server,
-    resolve_server, server_project_presence,
+    LinkedProject, MANIFEST_FILE, ProjectPresence, confirm_ancestor, find_manifest, parse_manifest,
+    resolve_project_server, resolve_server, server_project_presence,
 };
 
 /// Extra ignore rules for the upload, in gitignore syntax — for things that
 /// belong in the repo but not in a deploy snapshot.
 const RAILYARD_IGNORE_FILE: &str = ".railyardignore";
 
-pub(crate) fn run(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+/// Validate the manifest and pack the repository for deploy
+#[derive(clap::Args)]
+pub(crate) struct Args {
+    #[arg(long)]
+    server: Option<String>,
+}
+
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
     let cwd = env::current_dir()?;
-    let Some((root, raw)) = crate::resolve::find_manifest(&cwd)? else {
+    let Some((manifest_path, raw)) = find_manifest(&cwd)? else {
         return Err(format!(
             "no {MANIFEST_FILE} found here or in any ancestor; run `railyard init` first"
         )
         .into());
     };
-    let manifest_path = root.join(MANIFEST_FILE);
-    let manifest = railyard_manifest::parse(&raw)
+    let root = manifest_path
+        .parent()
+        .ok_or("manifest has no parent directory")?
+        .to_path_buf();
+    let manifest = parse_manifest(&manifest_path, &raw)
         .map_err(|error| format!("{} is invalid:\n{error}", manifest_path.display()))?;
 
     // `up` never invents projects: a manifest without an id points at `init`
@@ -33,7 +44,7 @@ pub(crate) fn run(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
         project.id.as_ref().map(|id| LinkedProject {
             id: id.clone(),
             name: project.name.clone(),
-            manifest_dir: (root != cwd).then(|| root.clone()),
+            manifest_path: (root != cwd).then(|| manifest_path.clone()),
         })
     }) else {
         return Err(format!(
@@ -42,18 +53,18 @@ pub(crate) fn run(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
         )
         .into());
     };
-    if !confirm_ancestor(&project)? {
+    if !confirm_ancestor(&project, ctx)? {
         return Err("up cancelled".into());
     }
 
-    let (server_name, server) = match server_flag {
+    let (server_name, server) = match args.server {
         Some(name) => resolve_server(Some(name))?,
-        None => resolve_project_server(&project)?,
+        None => resolve_project_server(&project, ctx).await?,
     };
 
     // The project must already exist on the resolved server; creating it here
     // would silently fork the project onto the wrong box.
-    match server_project_presence(&server, &project) {
+    match server_project_presence(&server, &project).await {
         ProjectPresence::Present => {}
         ProjectPresence::Absent => {
             return Err(format!(

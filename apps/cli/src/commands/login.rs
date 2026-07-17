@@ -10,22 +10,30 @@ use crate::config::{
 };
 use crate::http;
 
-pub(crate) fn run(
-    target: &str,
-    server_name: Option<String>,
-    user_flag: Option<String>,
-) -> Result<(), Box<dyn Error>> {
-    if target.starts_with(INVITE_BLOB_PREFIX) {
-        login(target, server_name)
+#[derive(clap::Args)]
+pub(crate) struct Args {
+    /// An invite blob, or an SSH target (user@host) to mint one on
+    target: String,
+    /// Local name for this server; defaults to the name embedded in the invite
+    #[arg(long)]
+    name: Option<String>,
+    /// User to create when logging in over SSH; defaults to your local username
+    #[arg(long)]
+    user: Option<String>,
+}
+
+pub(crate) async fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    if args.target.starts_with(INVITE_BLOB_PREFIX) {
+        login(&args.target, args.name).await
     } else {
-        login_ssh(target, server_name, user_flag)
+        login_ssh(&args.target, args.name, args.user).await
     }
 }
 
 /// `login user@host`: bootstrap sugar for admins with SSH access — run
 /// `railyard-server user add` on the box and redeem the resulting blob
 /// locally in one step.
-fn login_ssh(
+async fn login_ssh(
     target: &str,
     server_name: Option<String>,
     user_flag: Option<String>,
@@ -65,7 +73,7 @@ fn login_ssh(
         .find(|line| line.starts_with(INVITE_BLOB_PREFIX))
         .ok_or("the remote `user add` printed no invite blob")?;
 
-    login(blob, server_name)
+    login(blob, server_name).await
 }
 
 /// Squeeze a local username into the server's user-name charset.
@@ -76,7 +84,7 @@ fn sanitize_user_name(raw: &str) -> String {
         .collect()
 }
 
-fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> {
+async fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let invite = InvitePayload::parse(blob)?;
     if invite.expires_at <= unix_timestamp() {
         return Err("this invite has expired; ask for a new one".into());
@@ -88,7 +96,8 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
     // A dead key falls through to redemption, which is how a lost device
     // gets replaced.
     if let Some(project) = &invite.project
-        && let Some((entry_name, identity)) = existing_access(&invite.server_url, &project.id)?
+        && let Some((entry_name, identity)) =
+            existing_access(&invite.server_url, &project.id).await?
     {
         record_project_binding(&project.id, &entry_name)?;
         println!(
@@ -114,7 +123,7 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
     }
 
     let signing_key = generate_signing_key();
-    let redeemed = http::redeem_invite(&invite, &public_key_base64(&signing_key))?;
+    let redeemed = http::redeem_invite(&invite, &public_key_base64(&signing_key)).await?;
     let key_path = write_signing_key(&redeemed.key_id, &signing_key)?;
 
     write_server(
@@ -136,7 +145,7 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
     // redundant (the one way to hold both: project user first, promoted to
     // admin later). Drop those entries and move their bindings here.
     if invite.project.is_none() {
-        supersede_project_entries(&invite.server_url, &server_name)?;
+        supersede_project_entries(&invite.server_url, &server_name).await?;
     }
 
     // A project-scoped invite says exactly which server owns the project, so
@@ -156,13 +165,16 @@ fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> 
 /// Remove project-scoped entries for `server_url` that the new admin entry
 /// makes redundant, repointing their project bindings at it. Entries whose
 /// scope can't be confirmed (unreachable, rejected key) are left alone.
-fn supersede_project_entries(server_url: &str, admin_entry: &str) -> Result<(), Box<dyn Error>> {
+async fn supersede_project_entries(
+    server_url: &str,
+    admin_entry: &str,
+) -> Result<(), Box<dyn Error>> {
     for (name, server) in list_servers()? {
         if name == admin_entry || server.server_url != server_url {
             continue;
         }
         let project_scoped = matches!(
-            http::whoami(&server),
+            http::whoami(&server).await,
             Ok(http::WhoamiOutcome::Identity(identity)) if identity.project_id.is_some()
         );
         if !project_scoped {
@@ -183,7 +195,7 @@ fn supersede_project_entries(server_url: &str, admin_entry: &str) -> Result<(), 
 
 /// An existing identity on `server_url` whose live-checked scope covers
 /// `project_id`: an admin, or a user scoped to that same project.
-fn existing_access(
+async fn existing_access(
     server_url: &str,
     project_id: &str,
 ) -> Result<Option<(String, WhoamiResponse)>, Box<dyn Error>> {
@@ -191,7 +203,7 @@ fn existing_access(
         if server.server_url != server_url {
             continue;
         }
-        if let Ok(http::WhoamiOutcome::Identity(identity)) = http::whoami(&server)
+        if let Ok(http::WhoamiOutcome::Identity(identity)) = http::whoami(&server).await
             && (identity.project_id.is_none() || identity.project_id.as_deref() == Some(project_id))
         {
             return Ok(Some((name, identity)));
