@@ -68,13 +68,22 @@ pub(crate) async fn create_project(
 }
 
 /// Upload a packed repository archive; the server unpacks it and answers
-/// with the deployment it created (or a failure explaining why not).
+/// with the deployment it created (or a failure explaining why not). The
+/// message travels in the query string — the body is the bare archive, and
+/// the query is covered by the request signature.
 pub(crate) async fn create_deployment(
     server: &ServerConfig,
     project_id: &str,
+    message: Option<&str>,
     archive: Vec<u8>,
 ) -> Result<DeploymentSummary, Box<dyn Error>> {
-    let path = project_deployments_path(project_id);
+    let mut path = project_deployments_path(project_id);
+    if let Some(message) = message {
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("message", message)
+            .finish();
+        path = format!("{path}?{query}");
+    }
     let response =
         signed_request_with_type(server, Method::POST, &path, archive, "application/gzip").await?;
 
@@ -221,6 +230,10 @@ async fn signed_request_with_type(
 }
 
 fn control_plane_api_url(mut base_url: Url, suffix: &str) -> Result<Url, Box<dyn Error>> {
+    let (suffix, query) = match suffix.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (suffix, None),
+    };
     let existing_segments: Vec<String> = base_url
         .path_segments()
         .map(|segments| {
@@ -247,6 +260,7 @@ fn control_plane_api_url(mut base_url: Url, suffix: &str) -> Result<Url, Box<dyn
             }
         }
     }
+    base_url.set_query(query);
 
     Ok(base_url)
 }

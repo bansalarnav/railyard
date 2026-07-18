@@ -50,6 +50,8 @@ pub struct DeploymentSummary {
     pub project_id: String,
     pub status: DeploymentStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,

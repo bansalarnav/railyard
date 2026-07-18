@@ -22,6 +22,10 @@ const RAILYARD_IGNORE_FILE: &str = ".railyardignore";
 pub(crate) struct Args {
     #[arg(long)]
     server: Option<String>,
+    /// Message to attach to the deployment; defaults to the latest git
+    /// commit's subject when the repository has one
+    #[arg(short, long)]
+    message: Option<String>,
 }
 
 pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
@@ -98,11 +102,29 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
         human_size(archive.len() as u64)
     );
 
+    let message = args.message.or_else(|| latest_commit_subject(&root));
     println!("Uploading to {server_name}...");
-    let deployment = create_deployment(&server, &project.id, archive).await?;
+    let deployment = create_deployment(&server, &project.id, message.as_deref(), archive).await?;
     let _ = fs::remove_file(&archive_path);
     println!("Deployment {} is {}", deployment.id, deployment.status);
     Ok(())
+}
+
+/// Subject line of the latest commit, or None when `root` is not in a git
+/// repository (or git itself is unavailable).
+fn latest_commit_subject(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["log", "-1", "--pretty=%s"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let subject = String::from_utf8(output.stdout).ok()?;
+    let subject = subject.trim();
+    (!subject.is_empty()).then(|| subject.to_string())
 }
 
 /// Gzipped tarball of the repository at `root`, honoring `.gitignore` and

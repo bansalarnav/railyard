@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use axum::body::Body;
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, post};
@@ -352,6 +352,13 @@ async fn list_projects(
 /// runaway requests rather than archive size.
 const MAX_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+/// The message rides the query string so the body stays a bare archive; being
+/// part of the signed path-and-query, it needs no extra verification.
+#[derive(serde::Deserialize)]
+struct CreateDeploymentQuery {
+    message: Option<String>,
+}
+
 /// Receive a gzipped tarball of the project's source and unpack it under the
 /// server's deployments directory. Every upload becomes a deployment row, so
 /// each `up` run is tracked even when receiving or unpacking fails.
@@ -359,6 +366,7 @@ async fn create_deployment(
     State(state): State<ApiState>,
     Extension(caller): Extension<AuthUser>,
     Path(project_id): Path<String>,
+    Query(query): Query<CreateDeploymentQuery>,
     signed_hash: Option<Extension<SignedContentHash>>,
     request: Request,
 ) -> Response {
@@ -366,9 +374,15 @@ async fn create_deployment(
         return response;
     }
 
+    let message = query.message.as_deref().filter(|text| !text.is_empty());
     let deployment = match state
         .db
-        .create_deployment(&project_id, DeploymentStatus::Unpacking, unix_timestamp())
+        .create_deployment(
+            &project_id,
+            DeploymentStatus::Unpacking,
+            message,
+            unix_timestamp(),
+        )
         .await
     {
         Ok(deployment) => deployment,
@@ -415,6 +429,7 @@ async fn create_deployment(
                 id: deployment.id,
                 project_id,
                 status,
+                message: deployment.message,
                 error,
                 created_at: deployment.created_at,
                 updated_at: now,
@@ -544,6 +559,7 @@ fn deployment_summary(deployment: Deployment) -> DeploymentSummary {
         id: deployment.id,
         project_id: deployment.project_id,
         status: deployment.status,
+        message: deployment.message,
         error: deployment.error,
         created_at: deployment.created_at,
         updated_at: deployment.updated_at,

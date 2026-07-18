@@ -8,6 +8,7 @@ pub(crate) struct Deployment {
     pub(crate) id: String,
     pub(crate) project_id: String,
     pub(crate) status: DeploymentStatus,
+    pub(crate) message: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) created_at: u64,
     pub(crate) updated_at: u64,
@@ -18,14 +19,21 @@ impl Db {
         &self,
         project_id: &str,
         status: DeploymentStatus,
+        message: Option<&str>,
         now: u64,
     ) -> io::Result<Deployment> {
         let id = new_deployment_id();
         self.conn
             .execute(
-                "INSERT INTO deployments (id, project_id, status, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?4)",
-                (id.as_str(), project_id, status.as_str(), now as i64),
+                "INSERT INTO deployments (id, project_id, status, message, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params![
+                    id.as_str(),
+                    project_id,
+                    status.as_str(),
+                    message,
+                    now as i64
+                ],
             )
             .await
             .map_err(db_error)?;
@@ -34,6 +42,7 @@ impl Db {
             id,
             project_id: project_id.to_string(),
             status,
+            message: message.map(ToOwned::to_owned),
             error: None,
             created_at: now,
             updated_at: now,
@@ -61,7 +70,7 @@ impl Db {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, project_id, status, error, created_at, updated_at \
+                "SELECT id, project_id, status, message, error, created_at, updated_at \
                  FROM deployments WHERE project_id = ?1 \
                  ORDER BY created_at DESC, id DESC",
                 params![project_id],
@@ -75,9 +84,10 @@ impl Db {
                 id: text_column(&row, 0)?,
                 project_id: text_column(&row, 1)?,
                 status: status_column(&row, 2)?,
-                error: optional_text_column(&row, 3)?,
-                created_at: integer_column(&row, 4)? as u64,
-                updated_at: integer_column(&row, 5)? as u64,
+                message: optional_text_column(&row, 3)?,
+                error: optional_text_column(&row, 4)?,
+                created_at: integer_column(&row, 5)? as u64,
+                updated_at: integer_column(&row, 6)? as u64,
             });
         }
 
