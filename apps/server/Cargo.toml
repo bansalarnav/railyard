@@ -10,6 +10,7 @@ base64.workspace = true
 clap.workspace = true
 ed25519-dalek.workspace = true
 env_logger = "0.11"
+flate2 = "1"
 hex.workspace = true
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
@@ -22,5 +23,6 @@ railyard-auth.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tokio = { version = "1", features = ["net", "rt-multi-thread"] }
+tar = "0.4"
+tokio = { version = "1", features = ["fs", "io-util", "net", "rt-multi-thread"] }
 libsql = { version = "0.9", default-features = false, features = ["core"] }

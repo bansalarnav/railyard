@@ -1,7 +1,11 @@
+mod deployment;
 mod invite;
 mod project;
 mod user;
 
+pub use deployment::{
+    DeploymentStatus, DeploymentSummary, ListDeploymentsResponse, project_deployments_path,
+};
 pub use invite::{
     INVITE_BLOB_PREFIX, InviteParseError, InvitePayload, InviteProject, REDEEM_INVITE_PATH,
     RedeemInviteRequest, RedeemInviteResponse,

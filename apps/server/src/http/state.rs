@@ -23,11 +23,8 @@ pub(crate) struct ApiState {
 
 impl AppState {
     pub(crate) fn load() -> io::Result<Self> {
-        let proxy_host: IpAddr = parsed_env(
-            "RAILYARD_PROXY_HOST",
-            [0, 0, 0, 0].into(),
-            "an IP address",
-        )?;
+        let proxy_host: IpAddr =
+            parsed_env("RAILYARD_PROXY_HOST", [0, 0, 0, 0].into(), "an IP address")?;
         let proxy_port: u16 = parsed_env("RAILYARD_PROXY_PORT", 3000, "a port number")?;
         let api_host: IpAddr =
             parsed_env("RAILYARD_API_HOST", [127, 0, 0, 1].into(), "an IP address")?;

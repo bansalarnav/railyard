@@ -7,6 +7,7 @@ use std::path::Path;
 use std::{env, fs};
 
 use crate::context::ExecContext;
+use crate::http::create_deployment;
 use crate::resolve::{
     LinkedProject, MANIFEST_FILE, ProjectPresence, confirm_ancestor, find_manifest, parse_manifest,
     resolve_project_server, resolve_server, server_project_presence,
@@ -91,12 +92,16 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
     );
     let archive_path = env::temp_dir().join(format!("railyard-up-{}.tar.gz", project.id));
     let files = pack_repository(&root, &archive_path)?;
+    let archive = fs::read(&archive_path)?;
     println!(
-        "Packed {files} files into {} ({})",
-        archive_path.display(),
-        human_size(fs::metadata(&archive_path)?.len())
+        "Packed {files} files ({})",
+        human_size(archive.len() as u64)
     );
-    println!("Upload is not implemented yet; the archive was left in place.");
+
+    println!("Uploading to {server_name}...");
+    let deployment = create_deployment(&server, &project.id, archive).await?;
+    let _ = fs::remove_file(&archive_path);
+    println!("Deployment {} is {}", deployment.id, deployment.status);
     Ok(())
 }
 

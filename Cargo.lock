@@ -2506,6 +2506,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "env_logger",
+ "flate2",
  "hex",
  "http-body-util",
  "hyper",
@@ -2519,6 +2520,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tokio",
 ]
 

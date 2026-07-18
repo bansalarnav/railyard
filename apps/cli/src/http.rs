@@ -1,9 +1,10 @@
 use railyard_auth::{
-    CreateProjectRequest, CreateUserRequest, CreateUserResponse, HEADER_CONTENT_SHA256,
-    HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION, HEADER_TIMESTAMP,
-    InvitePayload, ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary,
-    REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse, SIGNATURE_VERSION, USERS_PATH,
-    UserSummary, WHOAMI_PATH, WhoamiResponse,
+    CreateProjectRequest, CreateUserRequest, CreateUserResponse, DeploymentSummary,
+    HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION,
+    HEADER_TIMESTAMP, InvitePayload, ListProjectsResponse, ListUsersResponse, PROJECTS_PATH,
+    ProjectSummary, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
+    SIGNATURE_VERSION, USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse,
+    project_deployments_path,
 };
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use std::error::Error;
@@ -61,6 +62,26 @@ pub(crate) async fn create_project(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(format!("project creation failed ({status}): {body}").into());
+    }
+
+    Ok(response.json().await?)
+}
+
+/// Upload a packed repository archive; the server unpacks it and answers
+/// with the deployment it created (or a failure explaining why not).
+pub(crate) async fn create_deployment(
+    server: &ServerConfig,
+    project_id: &str,
+    archive: Vec<u8>,
+) -> Result<DeploymentSummary, Box<dyn Error>> {
+    let path = project_deployments_path(project_id);
+    let response =
+        signed_request_with_type(server, Method::POST, &path, archive, "application/gzip").await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("deployment upload failed ({status}): {body}").into());
     }
 
     Ok(response.json().await?)
@@ -151,6 +172,16 @@ async fn signed_request(
     suffix: &str,
     body: Vec<u8>,
 ) -> Result<Response, Box<dyn Error>> {
+    signed_request_with_type(server, method, suffix, body, "application/json").await
+}
+
+async fn signed_request_with_type(
+    server: &ServerConfig,
+    method: Method,
+    suffix: &str,
+    body: Vec<u8>,
+    content_type: &str,
+) -> Result<Response, Box<dyn Error>> {
     let signing_key = read_signing_key(&server.private_key_path)?;
     let server_url = Url::parse(&server.server_url)?;
     let request_url = control_plane_api_url(server_url, suffix)?;
@@ -183,9 +214,7 @@ async fn signed_request(
         .header(HEADER_SIGNATURE_VERSION, SIGNATURE_VERSION);
 
     if !body.is_empty() {
-        request = request
-            .header("content-type", "application/json")
-            .body(body);
+        request = request.header("content-type", content_type).body(body);
     }
 
     Ok(request.send().await?)
