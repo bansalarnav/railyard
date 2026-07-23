@@ -9,8 +9,12 @@ services:
       RAILYARD_PROXY_PORT: 3000
       RAILYARD_API_HOST: 127.0.0.1
       RAILYARD_API_PORT: 3001
-      CARGO_HOME: /workspace/.server/cargo-home
-      CARGO_TARGET_DIR: /workspace/.server/target
+      RAILYARD_SERVER_URL: http://127.0.0.1:3000/railyard
+      RAILYARD_SERVER_NAME: dev
+      RAILYARD_DATA_DIR: /workspace/.dev-state/server
+      RAILYARD_RUNTIME_DIR: /run/railyard
+      CARGO_HOME: /workspace/.dev-state/cargo-home
+      CARGO_TARGET_DIR: /workspace/.dev-state/target
     init: true
     ports:
       - "3000:3000"

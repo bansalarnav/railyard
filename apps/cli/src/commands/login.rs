@@ -90,6 +90,15 @@ async fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Er
         return Err("this invite has expired; ask for a new one".into());
     }
 
+    if let Some((entry_name, identity)) = existing_different_user_with_same_scope(&invite).await? {
+        return Err(format!(
+            "already logged in to {} as user {} with the same permissions (server \
+             {entry_name}); this invite is for user {}. Log out of {entry_name} first",
+            invite.server_url, identity.name, invite.user_name
+        )
+        .into());
+    }
+
     // A project invite for a server where an existing identity already
     // covers that project (admin, or scoped to it, with a key that still
     // works) adds nothing — record the binding and leave the invite alone.
@@ -160,6 +169,26 @@ async fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Er
     }
 
     Ok(())
+}
+
+/// A live local identity for another user with exactly this invite's scope.
+async fn existing_different_user_with_same_scope(
+    invite: &InvitePayload,
+) -> Result<Option<(String, WhoamiResponse)>, Box<dyn Error>> {
+    let invited_project = invite.project.as_ref().map(|project| project.id.as_str());
+
+    for (name, server) in list_servers()? {
+        if server.server_url != invite.server_url {
+            continue;
+        }
+        if let Ok(http::WhoamiOutcome::Identity(identity)) = http::whoami(&server).await
+            && identity.project_id.as_deref() == invited_project
+            && identity.user_id != invite.user_id
+        {
+            return Ok(Some((name, identity)));
+        }
+    }
+    Ok(None)
 }
 
 /// Remove project-scoped entries for `server_url` that the new admin entry

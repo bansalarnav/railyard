@@ -76,6 +76,8 @@ When the derived name is already taken:
 
 - **Same server, same user** — this is a re-login (new device key for the same identity).
   Update the server entry in place with the new `key_id`.
+- **Same server, different user with the same permissions** — refuse the login before
+  redeeming the invite; log out of the existing identity first.
 - **A different server with the same derived name** — refuse to overwrite the existing entry;
   pass `--name <name>` to choose another local name.
 

@@ -32,9 +32,9 @@ ryd-invite-v1.<base64url JSON>
 
 The JSON payload is self-describing: `server_url`, `server_name` (the server's human name —
 `RAILYARD_SERVER_NAME` env or the box's hostname — since `server_url` is often a bare IP),
-`invite_token`, `expires_at`, and for project-scoped invites the project id and name. The
-client derives the profile name from these: project name, else server name, else the URL
-host. Properties:
+the invited user's id and name, `invite_token`, `expires_at`, and for project-scoped invites
+the project id and name. The client derives the profile name from these: project name, else
+server name, else the URL host. Properties:
 
 - **Single-use** — redeeming it consumes it; a leaked already-redeemed blob is worthless.
 - **Short-lived** — expires after 24 hours if unredeemed.

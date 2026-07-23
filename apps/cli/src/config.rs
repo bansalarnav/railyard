@@ -207,6 +207,10 @@ fn key_path(key_id: &str) -> io::Result<PathBuf> {
 }
 
 fn config_root() -> io::Result<PathBuf> {
+    if env::var_os("RAILYARD_DEV").is_some() {
+        return Ok(PathBuf::from(".dev-state"));
+    }
+
     if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(path).join("railyard"));
     }

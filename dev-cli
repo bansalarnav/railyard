@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export RAILYARD_DEV=1
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-.dev-state/host-target}"
+
+exec cargo run --quiet -p railyard -- "$@"

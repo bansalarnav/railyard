@@ -27,12 +27,30 @@ railyard-server up --foreground
 Run the server inside the Ubuntu dev container with hot reload:
 
 ```bash
-./dev
+./dev-server
 ```
 
 The container only publishes the server port on `3000`. For local dev, the dashboard URL is `http://127.0.0.1:3000/railyard`.
 
-Container-side Cargo state is stored in the gitignored `.server/` directory at the repo root so rebuilds stay warm without polluting the main workspace.
+On the first run, the dev server creates an admin user and logs the local CLI in
+automatically. Run authenticated client commands from another terminal with:
+
+```bash
+./dev-cli whoami
+./dev-cli init
+```
+
+The gitignored `.dev-state/` directory stores the server database, deployment
+data, dev client credentials, and Cargo build state. The server's persistent
+data is directly inspectable under `.dev-state/server`; container-only Unix
+runtime files such as the admin socket and PID file live under `/run/railyard`.
+Restarting or rebuilding the container preserves both projects and login state.
+The regular `railyard` CLI continues to use the user's global config directory;
+only `./dev-cli` (or `RAILYARD_DEV=1`) uses the repository-local client state.
+
+Outside Docker development, no override is required: server data continues to
+default to `$XDG_STATE_HOME/railyard/server` (or
+`~/.local/state/railyard/server` when `XDG_STATE_HOME` is unset).
 
 ## Dev Routing
 

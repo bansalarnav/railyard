@@ -4,17 +4,29 @@ use std::{
 };
 
 pub(crate) fn runtime_dir() -> PathBuf {
+    env::var("RAILYARD_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| default_server_dir())
+}
+
+fn data_dir() -> PathBuf {
+    env::var("RAILYARD_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| default_server_dir())
+}
+
+fn default_server_dir() -> PathBuf {
     state_root().join("server")
 }
 
 pub(crate) fn database_path() -> PathBuf {
-    runtime_dir().join("railyard.db")
+    data_dir().join("railyard.db")
 }
 
 /// Uploaded archives and their unpacked trees, one directory per deployment:
 /// deployments/<project_id>/<deployment_id>/{archive.tar.gz, source/}.
 pub(crate) fn deployment_dir(project_id: &str, deployment_id: &str) -> PathBuf {
-    runtime_dir()
+    data_dir()
         .join("deployments")
         .join(project_id)
         .join(deployment_id)

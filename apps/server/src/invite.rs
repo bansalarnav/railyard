@@ -38,6 +38,8 @@ pub(crate) async fn mint_invite(
     let blob = InvitePayload {
         server_url,
         server_name,
+        user_id: user_id.clone(),
+        user_name: name,
         project,
         invite_token: token,
         expires_at,
