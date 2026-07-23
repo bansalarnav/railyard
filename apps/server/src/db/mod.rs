@@ -1,7 +1,9 @@
+mod deployment;
 mod invite;
 mod project;
 mod user;
 
+pub(crate) use deployment::Deployment;
 pub(crate) use invite::token_hash;
 pub(crate) use project::Project;
 pub(crate) use user::AuthUser;
@@ -31,6 +33,15 @@ CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS deployments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 ";
 
@@ -73,6 +84,25 @@ impl Db {
             .ok_or_else(|| io::Error::other("pragma_table_info returned no rows"))?;
         if integer_column(&row, 0)? == 0 {
             conn.execute("ALTER TABLE users ADD COLUMN project_id TEXT", ())
+                .await
+                .map_err(db_error)?;
+        }
+
+        // Databases created before deploy messages lack deployments.message.
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM pragma_table_info('deployments') WHERE name = 'message'",
+                (),
+            )
+            .await
+            .map_err(db_error)?;
+        let row = rows
+            .next()
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| io::Error::other("pragma_table_info returned no rows"))?;
+        if integer_column(&row, 0)? == 0 {
+            conn.execute("ALTER TABLE deployments ADD COLUMN message TEXT", ())
                 .await
                 .map_err(db_error)?;
         }

@@ -71,7 +71,10 @@ fn parse_raw(raw: serde_json::Value) -> Result<RailyardManifest, ManifestError> 
                 ));
             }
             Err(ManifestError::Syntax(message)) => {
-                errors.push(ValidationError::new(format!("environments.{name}"), message));
+                errors.push(ValidationError::new(
+                    format!("environments.{name}"),
+                    message,
+                ));
             }
         }
     }
@@ -108,8 +111,8 @@ impl RailyardManifest {
             )]));
         }
 
-        let mut base = serde_json::to_value(self)
-            .map_err(|err| ManifestError::Syntax(err.to_string()))?;
+        let mut base =
+            serde_json::to_value(self).map_err(|err| ManifestError::Syntax(err.to_string()))?;
         base.as_object_mut()
             .expect("manifest always serializes to an object")
             .remove("environments");

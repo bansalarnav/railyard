@@ -11,6 +11,15 @@ pub(crate) fn database_path() -> PathBuf {
     runtime_dir().join("railyard.db")
 }
 
+/// Uploaded archives and their unpacked trees, one directory per deployment:
+/// deployments/<project_id>/<deployment_id>/{archive.tar.gz, source/}.
+pub(crate) fn deployment_dir(project_id: &str, deployment_id: &str) -> PathBuf {
+    runtime_dir()
+        .join("deployments")
+        .join(project_id)
+        .join(deployment_id)
+}
+
 /// Local admin API: requests on this socket are trusted as a server admin,
 /// gated by file permissions instead of request signatures.
 pub(crate) fn admin_sock_path() -> PathBuf {

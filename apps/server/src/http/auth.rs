@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::body::{Body, to_bytes};
-use axum::extract::{Request, State};
+use axum::extract::{OriginalUri, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -19,6 +19,13 @@ use crate::db::token_hash;
 const TIMESTAMP_WINDOW_SECONDS: u64 = 300;
 
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// The lowercase hex sha256 the caller signed. The signature covers only
+/// this claim, not the body itself, so whoever consumes the body must check
+/// it: `verify_body_hash` does for buffered routes, streaming handlers
+/// (deploy uploads) do it themselves as bytes land on disk.
+#[derive(Clone)]
+pub(crate) struct SignedContentHash(pub(crate) String);
 
 pub(crate) async fn redeem_invite(
     State(state): State<ApiState>,
@@ -68,6 +75,10 @@ pub(crate) async fn verify_signature(
     }
 }
 
+/// Verify the caller's identity from headers alone — the body is never read
+/// here, so large uploads can stream. The signature covers the claimed
+/// content hash; checking the body against that claim is deferred to
+/// `verify_body_hash` or the streaming handler.
 async fn checked_request(state: &ApiState, request: Request) -> Result<Request, String> {
     let (mut parts, body) = request.into_parts();
 
@@ -96,21 +107,6 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         return Err("timestamp outside the allowed window".to_string());
     }
 
-    let body_bytes = to_bytes(body, MAX_BODY_BYTES)
-        .await
-        .map_err(|_| "failed to read request body".to_string())?;
-    if hex::encode(Sha256::digest(&body_bytes)) != content_sha256.to_ascii_lowercase() {
-        return Err("body does not match content hash".to_string());
-    }
-
-    {
-        let mut seen = state.seen_nonces.lock().expect("nonce lock poisoned");
-        seen.retain(|_, seen_at| now.abs_diff(*seen_at) <= TIMESTAMP_WINDOW_SECONDS);
-        if seen.insert(nonce.to_string(), now).is_some() {
-            return Err("nonce already used".to_string());
-        }
-    }
-
     let (public_key, user) = state
         .db
         .key_owner(key_id)
@@ -129,19 +125,21 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| "signature is not base64 ed25519".to_string())?;
 
+    // The client signs the path it sent. Nested mounts (`/railyard/…`) strip
+    // their prefix from `parts.uri`, so verify against the original URI.
+    let uri = parts
+        .extensions
+        .get::<OriginalUri>()
+        .map(|original| &original.0)
+        .unwrap_or(&parts.uri);
     let host = match parts.headers.get("host").and_then(|v| v.to_str().ok()) {
         Some(host) => host.to_string(),
-        None => parts
-            .uri
+        None => uri
             .authority()
             .map(|authority| authority.to_string())
             .ok_or_else(|| "request has no host".to_string())?,
     };
-    let path_and_query = parts
-        .uri
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
 
     let canonical = canonical_request(
         key_id,
@@ -157,8 +155,48 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .verify(canonical.as_bytes(), &Signature::from_bytes(&signature))
         .map_err(|_| "signature verification failed".to_string())?;
 
+    // Record the nonce only after the signature checks out, so strangers
+    // can't fill the replay map with garbage.
+    {
+        let mut seen = state.seen_nonces.lock().expect("nonce lock poisoned");
+        seen.retain(|_, seen_at| now.abs_diff(*seen_at) <= TIMESTAMP_WINDOW_SECONDS);
+        if seen.insert(nonce.to_string(), now).is_some() {
+            return Err("nonce already used".to_string());
+        }
+    }
+
+    parts
+        .extensions
+        .insert(SignedContentHash(content_sha256.to_ascii_lowercase()));
     parts.extensions.insert(user);
-    Ok(Request::from_parts(parts, Body::from(body_bytes)))
+    Ok(Request::from_parts(parts, body))
+}
+
+/// Buffer the body and enforce the signed content hash. Applied to every
+/// protected route except streaming uploads. Requests without a signed hash
+/// (the admin socket skips signatures entirely) pass through.
+pub(crate) async fn verify_body_hash(request: Request, next: Next) -> Response {
+    let Some(expected) = request.extensions().get::<SignedContentHash>().cloned() else {
+        return next.run(request).await;
+    };
+
+    let (parts, body) = request.into_parts();
+    let body_bytes = match to_bytes(body, MAX_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "failed to read request body").into_response();
+        }
+    };
+    if hex::encode(Sha256::digest(&body_bytes)) != expected.0 {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "unauthorized: body does not match content hash",
+        )
+            .into_response();
+    }
+
+    next.run(Request::from_parts(parts, Body::from(body_bytes)))
+        .await
 }
 
 fn parse_public_key(encoded: &str) -> Option<VerifyingKey> {

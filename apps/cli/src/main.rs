@@ -23,6 +23,7 @@ enum Commands {
     Login(commands::login::Args),
     Whoami(commands::whoami::Args),
     Init(commands::init::Args),
+    Up(commands::up::Args),
     /// Pick one of your servers and link this directory's project to it
     Link,
     /// Forget which server this directory's project is linked to
@@ -44,6 +45,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         Commands::Login(args) => commands::login::run(args).await,
         Commands::Whoami(args) => commands::whoami::run(args).await,
         Commands::Init(args) => commands::init::run(args, ctx).await,
+        Commands::Up(args) => commands::up::run(args, ctx).await,
         Commands::Link => commands::link::run(ctx).await,
         Commands::Unlink => commands::unlink::run(ctx),
         Commands::User(args) => commands::user::run(args, ctx).await,
