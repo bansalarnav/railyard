@@ -210,8 +210,8 @@ invites:
   `.railyard.json` `project.id`) and prints the invite blob; `--server <name>` pins which
   server entry to use, like every other project command. `--admin` creates a **server-wide
   admin** instead — with several servers, a picker over the entries holding admin identities.
-  A directory with no linked project offers the admin invite interactively on a TTY (default
-  no) and errors otherwise. Either way the server only honors the request from an admin key —
+  A directory with no linked project errors and points to `railyard init` or the explicit
+  `--admin` option. Either way the server only honors the request from an admin key —
   project-scoped users cannot mint invites (see [auth](auth.md)).
 - `railyard user remove <name>` / `railyard user list` — admin-only, like all user
   management; a project-scoped key gets a 403. (Letting project users see their own

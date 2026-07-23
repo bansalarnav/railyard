@@ -67,20 +67,6 @@ async fn add(
     }
 
     let Some(project) = confirmed_linked_project(ctx)? else {
-        // No project to scope the invite to. On a TTY, offer the only other
-        // invite this command can mint — but never silently escalate.
-        if server_flag.is_none()
-            && ctx.interactive
-            && Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!(
-                    "No project is linked in this directory. Create a server-wide admin \
-                     invite for {name} instead?"
-                ))
-                .default(false)
-                .interact()?
-        {
-            return add_admin(name, None, ctx).await;
-        }
         return Err(format!(
             "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
              `railyard init` first, or pass --admin to invite someone to a whole server"

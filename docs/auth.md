@@ -67,7 +67,7 @@ On the client:
 railyard login <blob>                       # generate keypair, redeem invite, write server entry
 railyard user add bob                       # create a user scoped to the current project
                                             #   (from .railyard.json project.id), print blob
-railyard user add bob --server hetzner      # create a server-wide admin on that server, print blob
+railyard user add bob --admin --server hetzner # create a server-wide admin there, print blob
 railyard login <ssh_target>                 # bootstrap sugar: runs `user add` over SSH and
                                             #   redeems the blob in one step
 ```
