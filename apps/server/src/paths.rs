@@ -35,11 +35,11 @@ pub(crate) fn database_path() -> PathBuf {
     data_dir().join("railyard.db")
 }
 
-/// Uploaded archives and their unpacked trees, one directory per deployment:
-/// deployments/<project_id>/<release_id>/{archive.tar.gz, source/}.
+/// Uploaded archives and their unpacked trees, one directory per release:
+/// releases/<project_id>/<release_id>/{archive.tar.gz, source/}.
 pub(crate) fn release_dir(project_id: &str, release_id: &str) -> PathBuf {
     data_dir()
-        .join("deployments")
+        .join("releases")
         .join(project_id)
         .join(release_id)
 }

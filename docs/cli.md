@@ -28,7 +28,7 @@ railyard init                        # create project on server, scaffold .raily
 railyard unlink                      # forget this project's server binding (manifest untouched)
 railyard up [<service>…]             # validate, upload, diff, sync   (--env, --prune, --dry-run)
 railyard status                      # per-service state, replicas, domains, last deploy
-railyard logs [<service>]            # runtime logs                   (-f, -n, --build, --deploy <id>)
+railyard logs [<service>]            # runtime logs                   (-f, -n, --build, --release <id>)
 railyard restart <service>
 railyard rollback [<service>]
 railyard open [<service>]            # open the public URL in a browser
@@ -198,7 +198,7 @@ returns after upload. Exit code reflects rollout success so CI can gate on it.
   scopes to an environment. This is the feedback loop for GitHub-triggered deploys too.
 - `railyard logs [service]` — no service argument means all services interleaved with a name
   prefix, compose-style. `-f` follows, `-n 200` tails, `--build` shows the most recent build
-  log instead of runtime output, `--deploy <id>` targets a specific deployment.
+  log instead of runtime output, `--release <id>` targets a specific release.
 - `railyard metrics [service]` — point-in-time cpu / memory / restart counts per replica from
   the runtime stats API. Deliberately a table, not a TUI; dashboards can come later.
 

@@ -40,7 +40,7 @@ automatically. Run authenticated client commands from another terminal with:
 ./dev-cli init
 ```
 
-The gitignored `.dev-state/` directory stores the server database, deployment
+The gitignored `.dev-state/` directory stores the server database, release
 data, dev client credentials, and Cargo build state. The server's persistent
 data is directly inspectable under `.dev-state/server`; container-only Unix
 runtime files such as the admin socket and PID file live under `/run/railyard`.

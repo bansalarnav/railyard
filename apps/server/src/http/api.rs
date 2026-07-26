@@ -11,9 +11,9 @@ use pingora::services::ServiceReadyNotifier;
 use pingora::services::background::BackgroundService;
 use railyard_auth::{InviteProject, REDEEM_INVITE_PATH, unix_timestamp};
 use railyard_types::{
-    CreateProjectRequest, CreateUserRequest, CreateUserResponse, DeploymentStatus,
-    DeploymentSummary, ListDeploymentsResponse, ListProjectsResponse, ListUsersResponse,
-    PROJECTS_PATH, ProjectSummary, USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse,
+    CreateProjectRequest, CreateUserRequest, CreateUserResponse, ListProjectsResponse,
+    ListReleasesResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary, ReleaseStatus,
+    ReleaseSummary, USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use super::auth::{SignedContentHash, redeem_invite, verify_body_hash, verify_signature};
 use super::state::{ApiState, AppState};
-use crate::db::{AuthUser, Db, Deployment, Project};
+use crate::db::{AuthUser, Db, Project, Release};
 use crate::invite::mint_invite;
 
 pub(crate) struct ApiService {
@@ -111,7 +111,7 @@ fn api_routes(state: &ApiState) -> Router<ApiState> {
 /// local admin socket. Handlers see the caller as an `AuthUser` extension,
 /// inserted by the signature middleware or the admin socket respectively.
 ///
-/// The deployments route sits outside the `verify_body_hash` layer: uploads
+/// The releases route sits outside the `verify_body_hash` layer: uploads
 /// stream the body to disk and check the signed hash there instead of
 /// buffering it in memory.
 fn protected_routes() -> Router<ApiState> {
@@ -123,8 +123,8 @@ fn protected_routes() -> Router<ApiState> {
         .route(WHOAMI_PATH, get(whoami))
         .route_layer(middleware::from_fn(verify_body_hash))
         .route(
-            &format!("{PROJECTS_PATH}/{{project_id}}/deployments"),
-            get(list_deployments).post(create_deployment),
+            &format!("{PROJECTS_PATH}/{{project_id}}/releases"),
+            get(list_releases).post(create_release),
         )
 }
 
@@ -356,18 +356,18 @@ const MAX_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// The message rides the query string so the body stays a bare archive; being
 /// part of the signed path-and-query, it needs no extra verification.
 #[derive(serde::Deserialize)]
-struct CreateDeploymentQuery {
+struct CreateReleaseQuery {
     message: Option<String>,
 }
 
 /// Receive a gzipped tarball of the project's source and unpack it under the
-/// server's deployments directory. Every upload becomes a deployment row, so
+/// server's releases directory. Every upload becomes a release row, so
 /// each `up` run is tracked even when receiving or unpacking fails.
-async fn create_deployment(
+async fn create_release(
     State(state): State<ApiState>,
     Extension(caller): Extension<AuthUser>,
     Path(project_id): Path<String>,
-    Query(query): Query<CreateDeploymentQuery>,
+    Query(query): Query<CreateReleaseQuery>,
     signed_hash: Option<Extension<SignedContentHash>>,
     request: Request,
 ) -> Response {
@@ -376,24 +376,24 @@ async fn create_deployment(
     }
 
     let message = query.message.as_deref().filter(|text| !text.is_empty());
-    let deployment = match state
+    let release = match state
         .db
-        .create_deployment(
+        .create_release(
             &project_id,
-            DeploymentStatus::Unpacking,
+            ReleaseStatus::Unpacking,
             message,
             unix_timestamp(),
         )
         .await
     {
-        Ok(deployment) => deployment,
+        Ok(release) => release,
         Err(error) => {
-            log::error!("deployment creation failed: {error}");
+            log::error!("release creation failed: {error}");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
-    let dir = crate::paths::release_dir(&project_id, &deployment.id);
+    let dir = crate::paths::release_dir(&project_id, &release.id);
     let signed_hash = signed_hash.map(|Extension(hash)| hash.0);
     let unpacked = match receive_archive(&dir, request.into_body(), signed_hash).await {
         Ok(()) => {
@@ -407,45 +407,45 @@ async fn create_deployment(
     };
 
     let (status, error) = match &unpacked {
-        Ok(()) => (DeploymentStatus::Ready, None),
-        Err(error) => (DeploymentStatus::Failed, Some(error.to_string())),
+        Ok(()) => (ReleaseStatus::Ready, None),
+        Err(error) => (ReleaseStatus::Failed, Some(error.to_string())),
     };
     let now = unix_timestamp();
     if let Err(error) = state
         .db
-        .set_deployment_status(&deployment.id, status, error.as_deref(), now)
+        .set_release_status(&release.id, status, error.as_deref(), now)
         .await
     {
-        log::error!("deployment status update failed: {error}");
+        log::error!("release status update failed: {error}");
     }
 
     match unpacked {
         Ok(()) => {
             log::info!(
-                "user {} created deployment {} for project {project_id}",
+                "user {} created release {} for project {project_id}",
                 caller.id,
-                deployment.id
+                release.id
             );
-            Json(DeploymentSummary {
-                id: deployment.id,
+            Json(ReleaseSummary {
+                id: release.id,
                 project_id,
                 status,
-                message: deployment.message,
+                message: release.message,
                 error,
-                created_at: deployment.created_at,
+                created_at: release.created_at,
                 updated_at: now,
             })
             .into_response()
         }
         Err(failure) => (
             StatusCode::BAD_REQUEST,
-            format!("deployment {} failed: {failure}", deployment.id),
+            format!("release {} failed: {failure}", release.id),
         )
             .into_response(),
     }
 }
 
-async fn list_deployments(
+async fn list_releases(
     State(state): State<ApiState>,
     Extension(caller): Extension<AuthUser>,
     Path(project_id): Path<String>,
@@ -454,13 +454,13 @@ async fn list_deployments(
         return response;
     }
 
-    match state.db.list_deployments(&project_id).await {
-        Ok(deployments) => Json(ListDeploymentsResponse {
-            deployments: deployments.into_iter().map(deployment_summary).collect(),
+    match state.db.list_releases(&project_id).await {
+        Ok(releases) => Json(ListReleasesResponse {
+            releases: releases.into_iter().map(release_summary).collect(),
         })
         .into_response(),
         Err(error) => {
-            log::error!("deployment listing failed: {error}");
+            log::error!("release listing failed: {error}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -468,7 +468,7 @@ async fn list_deployments(
 
 /// A project-scoped key may only touch its own project; admins may touch
 /// any. Also confirms the project exists, which keeps unknown ids out of
-/// the deployments table and the filesystem.
+/// the releases table and the filesystem.
 async fn confirm_project_access(
     state: &ApiState,
     caller: &AuthUser,
@@ -555,15 +555,15 @@ fn unpack_archive(dir: &std::path::Path) -> io::Result<()> {
     tar::Archive::new(GzDecoder::new(io::BufReader::new(archive))).unpack(&source)
 }
 
-fn deployment_summary(deployment: Deployment) -> DeploymentSummary {
-    DeploymentSummary {
-        id: deployment.id,
-        project_id: deployment.project_id,
-        status: deployment.status,
-        message: deployment.message,
-        error: deployment.error,
-        created_at: deployment.created_at,
-        updated_at: deployment.updated_at,
+fn release_summary(release: Release) -> ReleaseSummary {
+    ReleaseSummary {
+        id: release.id,
+        project_id: release.project_id,
+        status: release.status,
+        message: release.message,
+        error: release.error,
+        created_at: release.created_at,
+        updated_at: release.updated_at,
     }
 }
 

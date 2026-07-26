@@ -4,9 +4,9 @@ use railyard_auth::{
     SIGNATURE_VERSION,
 };
 use railyard_types::{
-    CreateProjectRequest, CreateUserRequest, CreateUserResponse, DeploymentSummary,
-    ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary, USERS_PATH,
-    UserSummary, WHOAMI_PATH, WhoamiResponse, project_deployments_path,
+    CreateProjectRequest, CreateUserRequest, CreateUserResponse, ListProjectsResponse,
+    ListUsersResponse, PROJECTS_PATH, ProjectSummary, ReleaseSummary, USERS_PATH, UserSummary,
+    WHOAMI_PATH, WhoamiResponse, project_releases_path,
 };
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use std::error::Error;
@@ -70,16 +70,16 @@ pub(crate) async fn create_project(
 }
 
 /// Upload a packed repository archive; the server unpacks it and answers
-/// with the deployment it created (or a failure explaining why not). The
+/// with the release it created (or a failure explaining why not). The
 /// message travels in the query string — the body is the bare archive, and
 /// the query is covered by the request signature.
-pub(crate) async fn create_deployment(
+pub(crate) async fn create_release(
     server: &ServerConfig,
     project_id: &str,
     message: Option<&str>,
     archive: Vec<u8>,
-) -> Result<DeploymentSummary, Box<dyn Error>> {
-    let mut path = project_deployments_path(project_id);
+) -> Result<ReleaseSummary, Box<dyn Error>> {
+    let mut path = project_releases_path(project_id);
     if let Some(message) = message {
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("message", message)
@@ -92,7 +92,7 @@ pub(crate) async fn create_deployment(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("deployment upload failed ({status}): {body}").into());
+        return Err(format!("release upload failed ({status}): {body}").into());
     }
 
     Ok(response.json().await?)

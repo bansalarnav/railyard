@@ -7,7 +7,7 @@ use std::path::Path;
 use std::{env, fs};
 
 use crate::context::ExecContext;
-use crate::http::create_deployment;
+use crate::http::create_release;
 use crate::resolve::{
     LinkedProject, MANIFEST_FILE, ProjectPresence, confirm_ancestor, find_manifest, parse_manifest,
     resolve_project_server, resolve_server, server_project_presence,
@@ -22,7 +22,7 @@ const RAILYARD_IGNORE_FILE: &str = ".railyardignore";
 pub(crate) struct Args {
     #[arg(long)]
     server: Option<String>,
-    /// Message to attach to the deployment; defaults to the latest git
+    /// Message to attach to the release; defaults to the latest git
     /// commit's subject when the repository has one
     #[arg(short, long)]
     message: Option<String>,
@@ -104,9 +104,9 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
 
     let message = args.message.or_else(|| latest_commit_subject(&root));
     println!("Uploading to {server_name}...");
-    let deployment = create_deployment(&server, &project.id, message.as_deref(), archive).await?;
+    let release = create_release(&server, &project.id, message.as_deref(), archive).await?;
     let _ = fs::remove_file(&archive_path);
-    println!("Deployment {} is {}", deployment.id, deployment.status);
+    println!("Release {} is {}", release.id, release.status);
     Ok(())
 }
 

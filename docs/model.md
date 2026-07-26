@@ -239,7 +239,7 @@ current values**. Consequences, all intentional:
 - `railyard diff #40 #43` can say *which* secret changed without knowing any values.
 
 **envFiles are the other kind of secret, and that's fine.** `.env.api` ships inside the
-source archive, so those values are deployment-pinned by nature and *do* roll back with a
+source archive, so those values are release-pinned by nature and *do* roll back with a
 release. The contrast is a feature: env files = config that travels with the code
 snapshot; the secrets store = values that outlive releases and rotate independently.
 Users pick semantics by picking the mechanism.
@@ -343,9 +343,11 @@ Notably absent, on purpose:
 - **No per-row deploy status on service_releases.** Deploy-attempt outcomes live with
   containers and activations.
 
-Migration from the current `deployments` table: it holds upload receipts (id, status,
-message, timestamps) — those map onto `releases` with `seq` backfilled by `created_at`
-order and `manifest_json` backfilled from the archived source trees where available.
+The current `releases` table is already the upload-receipt subset of this shape:
+id, project_id, status, message, error, timestamps. Growing it into
+the table above means adding `seq` (backfilled by `created_at` order), `previous`,
+`manifest_json` (backfilled from the archived source trees where available),
+`secrets_json`, and `created_by`.
 
 ## Known wrinkles / deferred decisions
 

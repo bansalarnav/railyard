@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use pingora::Result;
 use hyper::Uri;
+use pingora::Result;
 use pingora::http::RequestHeader;
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;

@@ -3,15 +3,15 @@ use std::fmt;
 
 use crate::PROJECTS_PATH;
 
-/// `POST` a gzipped tarball of the project source here to create a
-/// deployment; `GET` lists the project's deployments, newest first.
-pub fn project_deployments_path(project_id: &str) -> String {
-    format!("{PROJECTS_PATH}/{project_id}/deployments")
+/// `POST` a gzipped tarball of the project source here to create a release;
+/// `GET` lists the project's releases, newest first.
+pub fn project_releases_path(project_id: &str) -> String {
+    format!("{PROJECTS_PATH}/{project_id}/releases")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DeploymentStatus {
+pub enum ReleaseStatus {
     /// Archive received; the server is unpacking it.
     Unpacking,
     /// Source is unpacked on the server, ready for the next stage.
@@ -19,7 +19,7 @@ pub enum DeploymentStatus {
     Failed,
 }
 
-impl DeploymentStatus {
+impl ReleaseStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Unpacking => "unpacking",
@@ -38,17 +38,17 @@ impl DeploymentStatus {
     }
 }
 
-impl fmt::Display for DeploymentStatus {
+impl fmt::Display for ReleaseStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DeploymentSummary {
+pub struct ReleaseSummary {
     pub id: String,
     pub project_id: String,
-    pub status: DeploymentStatus,
+    pub status: ReleaseStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,6 +58,6 @@ pub struct DeploymentSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListDeploymentsResponse {
-    pub deployments: Vec<DeploymentSummary>,
+pub struct ListReleasesResponse {
+    pub releases: Vec<ReleaseSummary>,
 }

@@ -1,13 +1,13 @@
 use libsql::params;
-use railyard_types::DeploymentStatus;
+use railyard_types::ReleaseStatus;
 use std::io;
 
 use super::{Db, db_error, integer_column, optional_text_column, text_column};
 
-pub(crate) struct Deployment {
+pub(crate) struct Release {
     pub(crate) id: String,
     pub(crate) project_id: String,
-    pub(crate) status: DeploymentStatus,
+    pub(crate) status: ReleaseStatus,
     pub(crate) message: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) created_at: u64,
@@ -15,17 +15,17 @@ pub(crate) struct Deployment {
 }
 
 impl Db {
-    pub(crate) async fn create_deployment(
+    pub(crate) async fn create_release(
         &self,
         project_id: &str,
-        status: DeploymentStatus,
+        status: ReleaseStatus,
         message: Option<&str>,
         now: u64,
-    ) -> io::Result<Deployment> {
-        let id = new_deployment_id();
+    ) -> io::Result<Release> {
+        let id = new_release_id();
         self.conn
             .execute(
-                "INSERT INTO deployments (id, project_id, status, message, created_at, updated_at) \
+                "INSERT INTO releases (id, project_id, status, message, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
                 params![
                     id.as_str(),
@@ -38,7 +38,7 @@ impl Db {
             .await
             .map_err(db_error)?;
 
-        Ok(Deployment {
+        Ok(Release {
             id,
             project_id: project_id.to_string(),
             status,
@@ -49,16 +49,16 @@ impl Db {
         })
     }
 
-    pub(crate) async fn set_deployment_status(
+    pub(crate) async fn set_release_status(
         &self,
         id: &str,
-        status: DeploymentStatus,
+        status: ReleaseStatus,
         error: Option<&str>,
         now: u64,
     ) -> io::Result<()> {
         self.conn
             .execute(
-                "UPDATE deployments SET status = ?2, error = ?3, updated_at = ?4 WHERE id = ?1",
+                "UPDATE releases SET status = ?2, error = ?3, updated_at = ?4 WHERE id = ?1",
                 params![id, status.as_str(), error, now as i64],
             )
             .await
@@ -66,21 +66,21 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) async fn list_deployments(&self, project_id: &str) -> io::Result<Vec<Deployment>> {
+    pub(crate) async fn list_releases(&self, project_id: &str) -> io::Result<Vec<Release>> {
         let mut rows = self
             .conn
             .query(
                 "SELECT id, project_id, status, message, error, created_at, updated_at \
-                 FROM deployments WHERE project_id = ?1 \
+                 FROM releases WHERE project_id = ?1 \
                  ORDER BY created_at DESC, id DESC",
                 params![project_id],
             )
             .await
             .map_err(db_error)?;
 
-        let mut deployments = Vec::new();
+        let mut releases = Vec::new();
         while let Some(row) = rows.next().await.map_err(db_error)? {
-            deployments.push(Deployment {
+            releases.push(Release {
                 id: text_column(&row, 0)?,
                 project_id: text_column(&row, 1)?,
                 status: status_column(&row, 2)?,
@@ -91,20 +91,20 @@ impl Db {
             });
         }
 
-        Ok(deployments)
+        Ok(releases)
     }
 }
 
-fn status_column(row: &libsql::Row, index: i32) -> io::Result<DeploymentStatus> {
+fn status_column(row: &libsql::Row, index: i32) -> io::Result<ReleaseStatus> {
     let text = text_column(row, index)?;
-    DeploymentStatus::parse(&text)
-        .ok_or_else(|| io::Error::other(format!("unknown deployment status {text:?}")))
+    ReleaseStatus::parse(&text)
+        .ok_or_else(|| io::Error::other(format!("unknown release status {text:?}")))
 }
 
-fn new_deployment_id() -> String {
+fn new_release_id() -> String {
     use rand::RngCore;
 
     let mut bytes = [0u8; 8];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
-    format!("dpl_{}", hex::encode(bytes))
+    format!("rel_{}", hex::encode(bytes))
 }
