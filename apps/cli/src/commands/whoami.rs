@@ -1,4 +1,4 @@
-use railyard_auth::WhoamiResponse;
+use railyard_types::WhoamiResponse;
 use std::error::Error;
 
 use crate::config::list_servers;

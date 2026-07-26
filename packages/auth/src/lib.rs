@@ -1,19 +1,12 @@
-mod deployment;
-mod invite;
-mod project;
-mod user;
+//! How a caller proves who it is: request signing, and the invite blob that
+//! bootstraps a signing key. The API's request and response types live in
+//! `railyard-types`.
 
-pub use deployment::{
-    DeploymentStatus, DeploymentSummary, ListDeploymentsResponse, project_deployments_path,
-};
+mod invite;
+
 pub use invite::{
     INVITE_BLOB_PREFIX, InviteParseError, InvitePayload, InviteProject, REDEEM_INVITE_PATH,
     RedeemInviteRequest, RedeemInviteResponse,
-};
-pub use project::{CreateProjectRequest, ListProjectsResponse, PROJECTS_PATH, ProjectSummary};
-pub use user::{
-    CreateUserRequest, CreateUserResponse, ListUsersResponse, USERS_PATH, UserSummary, WHOAMI_PATH,
-    WhoamiResponse,
 };
 
 use std::time::{SystemTime, UNIX_EPOCH};

@@ -42,7 +42,7 @@ server name, else the URL host. Properties:
   never authenticates API requests. It is exchanged, once, for a key registration.
 
 Redemption is the one unauthenticated endpoint: the client generates a keypair locally and
-calls `POST /auth/redeem-invite` with the token and its public key. The server verifies the
+calls `POST /api/auth/redeem-invite` with the token and its public key. The server verifies the
 token, binds the key to the invited user, marks the invite used, and returns the `key_id`.
 
 ## CLI lifecycle

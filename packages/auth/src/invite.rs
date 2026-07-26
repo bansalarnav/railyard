@@ -5,7 +5,7 @@ use std::fmt;
 
 pub const INVITE_BLOB_PREFIX: &str = "ryd-invite-v1.";
 
-pub const REDEEM_INVITE_PATH: &str = "/auth/redeem-invite";
+pub const REDEEM_INVITE_PATH: &str = "/api/auth/redeem-invite";
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InvitePayload {
     pub server_url: String,

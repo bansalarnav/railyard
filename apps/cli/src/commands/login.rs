@@ -1,4 +1,5 @@
-use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, WhoamiResponse, unix_timestamp};
+use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, unix_timestamp};
+use railyard_types::WhoamiResponse;
 use std::env;
 use std::error::Error;
 use std::process::Command;

@@ -1,10 +1,12 @@
 use railyard_auth::{
-    CreateProjectRequest, CreateUserRequest, CreateUserResponse, DeploymentSummary,
     HEADER_CONTENT_SHA256, HEADER_KEY_ID, HEADER_NONCE, HEADER_SIGNATURE, HEADER_SIGNATURE_VERSION,
-    HEADER_TIMESTAMP, InvitePayload, ListProjectsResponse, ListUsersResponse, PROJECTS_PATH,
-    ProjectSummary, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
-    SIGNATURE_VERSION, USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse,
-    project_deployments_path,
+    HEADER_TIMESTAMP, InvitePayload, REDEEM_INVITE_PATH, RedeemInviteRequest, RedeemInviteResponse,
+    SIGNATURE_VERSION,
+};
+use railyard_types::{
+    CreateProjectRequest, CreateUserRequest, CreateUserResponse, DeploymentSummary,
+    ListProjectsResponse, ListUsersResponse, PROJECTS_PATH, ProjectSummary, USERS_PATH,
+    UserSummary, WHOAMI_PATH, WhoamiResponse, project_deployments_path,
 };
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use std::error::Error;

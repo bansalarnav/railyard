@@ -1,5 +1,5 @@
 use libsql::params;
-use railyard_auth::DeploymentStatus;
+use railyard_types::DeploymentStatus;
 use std::io;
 
 use super::{Db, db_error, integer_column, optional_text_column, text_column};

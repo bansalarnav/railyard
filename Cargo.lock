@@ -2341,6 +2341,7 @@ dependencies = [
  "ignore",
  "railyard-auth",
  "railyard-manifest",
+ "railyard-types",
  "rand 0.8.5",
  "reqwest",
  "serde",
@@ -2392,12 +2393,20 @@ dependencies = [
  "nix 0.30.1",
  "pingora",
  "railyard-auth",
+ "railyard-types",
  "rand 0.8.5",
  "serde",
  "serde_json",
  "sha2",
  "tar",
  "tokio",
+]
+
+[[package]]
+name = "railyard-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

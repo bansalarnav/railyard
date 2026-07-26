@@ -2,9 +2,8 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{Method, StatusCode};
 use hyper_util::rt::TokioIo;
-use railyard_auth::{
-    CreateUserRequest, CreateUserResponse, ListUsersResponse, USERS_PATH, unix_timestamp,
-};
+use railyard_auth::unix_timestamp;
+use railyard_types::{CreateUserRequest, CreateUserResponse, ListUsersResponse, USERS_PATH};
 use std::{future::Future, io};
 use tokio::net::UnixStream;
 

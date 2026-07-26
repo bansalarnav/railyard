@@ -9,11 +9,11 @@ use flate2::read::GzDecoder;
 use pingora::server::ShutdownWatch;
 use pingora::services::ServiceReadyNotifier;
 use pingora::services::background::BackgroundService;
-use railyard_auth::{
+use railyard_auth::{InviteProject, REDEEM_INVITE_PATH, unix_timestamp};
+use railyard_types::{
     CreateProjectRequest, CreateUserRequest, CreateUserResponse, DeploymentStatus,
-    DeploymentSummary, InviteProject, ListDeploymentsResponse, ListProjectsResponse,
-    ListUsersResponse, PROJECTS_PATH, ProjectSummary, REDEEM_INVITE_PATH, USERS_PATH, UserSummary,
-    WHOAMI_PATH, WhoamiResponse, unix_timestamp,
+    DeploymentSummary, ListDeploymentsResponse, ListProjectsResponse, ListUsersResponse,
+    PROJECTS_PATH, ProjectSummary, USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -392,7 +392,7 @@ async fn create_deployment(
         }
     };
 
-    let dir = crate::paths::deployment_dir(&project_id, &deployment.id);
+    let dir = crate::paths::release_dir(&project_id, &deployment.id);
     let signed_hash = signed_hash.map(|Extension(hash)| hash.0);
     let unpacked = match receive_archive(&dir, request.into_body(), signed_hash).await {
         Ok(()) => {
