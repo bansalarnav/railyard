@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::body::{Body, to_bytes};
-use axum::extract::{OriginalUri, Request, State};
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -125,13 +125,9 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| "signature is not base64 ed25519".to_string())?;
 
-    // The client signs the path it sent. Nested mounts (`/railyard/…`) strip
-    // their prefix from `parts.uri`, so verify against the original URI.
-    let uri = parts
-        .extensions
-        .get::<OriginalUri>()
-        .map(|original| &original.0)
-        .unwrap_or(&parts.uri);
+    // The client signs the path relative to the API's mount point, which is
+    // exactly what arrives here once the proxy has stripped `/railyard`.
+    let uri = &parts.uri;
     let host = match parts.headers.get("host").and_then(|v| v.to_str().ok()) {
         Some(host) => host.to_string(),
         None => uri

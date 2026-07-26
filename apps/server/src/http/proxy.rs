@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use pingora::Result;
+use hyper::Uri;
 use pingora::http::RequestHeader;
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
@@ -21,6 +22,10 @@ pub(crate) struct RoutingTable {
 pub(crate) struct RouteTarget {
     upstream_addr: SocketAddr,
     upstream_name: String,
+    /// Set when the API was reached through `/railyard`: that prefix is a
+    /// mount point, not part of the API's own paths, so it is stripped before
+    /// the request is forwarded.
+    strip_api_prefix: bool,
 }
 
 impl RoutingTable {
@@ -42,6 +47,7 @@ impl RoutingTable {
             return Some(RouteTarget {
                 upstream_addr: self.api_addr,
                 upstream_name: API_LABEL.to_string(),
+                strip_api_prefix: is_api_path(path),
             });
         }
 
@@ -50,6 +56,7 @@ impl RoutingTable {
         Some(RouteTarget {
             upstream_addr,
             upstream_name: service.to_string(),
+            strip_api_prefix: false,
         })
     }
 }
@@ -96,6 +103,11 @@ impl ProxyHttp for IngressProxy {
     ) -> Result<()> {
         if let Some(target) = ctx {
             upstream_request.insert_header("x-railyard-upstream", target.upstream_name.as_str())?;
+            if target.strip_api_prefix
+                && let Some(stripped) = strip_api_prefix(&upstream_request.uri)
+            {
+                upstream_request.set_uri(stripped);
+            }
         }
         Ok(())
     }
@@ -104,6 +116,20 @@ impl ProxyHttp for IngressProxy {
 fn is_api_path(path: &str) -> bool {
     path.strip_prefix(API_PATH_PREFIX)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// Drop the `/railyard` mount point so the API sees its own paths. The client
+/// signs the path relative to that mount, so this is what the signature
+/// covers. `/railyard` itself becomes `/`.
+fn strip_api_prefix(uri: &Uri) -> Option<Uri> {
+    let path_and_query = uri.path_and_query()?.as_str();
+    let rest = path_and_query.strip_prefix(API_PATH_PREFIX)?;
+    let rest = if rest.is_empty() || rest.starts_with('?') {
+        format!("/{rest}")
+    } else {
+        rest.to_string()
+    };
+    rest.parse().ok()
 }
 
 fn request_host(request: &RequestHeader) -> Option<String> {

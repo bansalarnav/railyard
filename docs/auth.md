@@ -93,6 +93,11 @@ The canonical request (defined in `packages/auth`, shared by client and server) 
 key id, timestamp, nonce, method, path + query, host, and body hash, so none of those can be
 tampered with in transit.
 
+The signed path is relative to the API's mount point, not the URL as sent. A server reached
+at `http://host/railyard` signs `/api/users`, because the ingress proxy strips `/railyard`
+before forwarding — so a path-mounted server and a host-routed one (`railyard.host/api/users`)
+produce the same canonical request.
+
 ## Authorization
 
 After signature verification, the middleware resolves key → user and attaches it to the

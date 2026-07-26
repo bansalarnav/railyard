@@ -42,8 +42,9 @@ impl BackgroundService for ApiService {
             db: Arc::new(db),
             seen_nonces: Arc::new(Mutex::new(HashMap::new())),
         };
+        // The ingress proxy strips the `/railyard` mount point, so the API
+        // only ever serves its own paths here.
         let app = api_routes(&state)
-            .nest("/railyard", api_routes(&state))
             .route("/healthz", get(healthz))
             .with_state(state.clone());
 
