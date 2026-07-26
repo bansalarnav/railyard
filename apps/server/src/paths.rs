@@ -3,6 +3,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+fn state_root() -> PathBuf {
+    if let Ok(path) = env::var("XDG_STATE_HOME") {
+        return PathBuf::from(path).join("railyard");
+    }
+
+    let home = env::var("HOME").expect("HOME must be set when XDG_STATE_HOME is unset");
+    Path::new(&home)
+        .join(".local")
+        .join("state")
+        .join("railyard")
+}
+
 pub(crate) fn runtime_dir() -> PathBuf {
     env::var("RAILYARD_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -24,28 +36,16 @@ pub(crate) fn database_path() -> PathBuf {
 }
 
 /// Uploaded archives and their unpacked trees, one directory per deployment:
-/// deployments/<project_id>/<deployment_id>/{archive.tar.gz, source/}.
-pub(crate) fn deployment_dir(project_id: &str, deployment_id: &str) -> PathBuf {
+/// deployments/<project_id>/<release_id>/{archive.tar.gz, source/}.
+pub(crate) fn release_dir(project_id: &str, release_id: &str) -> PathBuf {
     data_dir()
         .join("deployments")
         .join(project_id)
-        .join(deployment_id)
+        .join(release_id)
 }
 
 /// Local admin API: requests on this socket are trusted as a server admin,
 /// gated by file permissions instead of request signatures.
 pub(crate) fn admin_sock_path() -> PathBuf {
     runtime_dir().join("admin.sock")
-}
-
-fn state_root() -> PathBuf {
-    if let Ok(path) = env::var("XDG_STATE_HOME") {
-        return PathBuf::from(path).join("railyard");
-    }
-
-    let home = env::var("HOME").expect("HOME must be set when XDG_STATE_HOME is unset");
-    Path::new(&home)
-        .join(".local")
-        .join("state")
-        .join("railyard")
 }
