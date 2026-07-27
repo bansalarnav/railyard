@@ -1,8 +1,9 @@
+mod api;
 mod cli;
-mod db;
-mod http;
-mod invite;
+mod config;
 mod paths;
+mod proxy;
+mod server;
 
 fn main() {
     env_logger::init();

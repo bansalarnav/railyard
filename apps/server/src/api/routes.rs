@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
@@ -6,9 +5,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, post};
 use axum::{Extension, Json, Router, middleware, routing::get};
 use flate2::read::GzDecoder;
-use pingora::server::ShutdownWatch;
-use pingora::services::ServiceReadyNotifier;
-use pingora::services::background::BackgroundService;
 use railyard_auth::{InviteProject, REDEEM_INVITE_PATH, unix_timestamp};
 use railyard_types::{
     CreateProjectRequest, CreateUserRequest, CreateUserResponse, ListProjectsResponse,
@@ -16,79 +12,16 @@ use railyard_types::{
     ReleaseSummary, USERS_PATH, UserSummary, WHOAMI_PATH, WhoamiResponse,
 };
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex};
 
+use super::ApiState;
 use super::auth::{SignedContentHash, redeem_invite, verify_body_hash, verify_signature};
-use super::state::{ApiState, AppState};
-use crate::db::{AuthUser, Db, Project, Release};
-use crate::invite::mint_invite;
-
-pub(crate) struct ApiService {
-    pub(crate) state: AppState,
-}
-
-#[async_trait]
-impl BackgroundService for ApiService {
-    async fn start_with_ready_notifier(
-        &self,
-        shutdown: ShutdownWatch,
-        ready_notifier: ServiceReadyNotifier,
-    ) {
-        let db = Db::open().await.expect("failed to open auth database");
-        let state = ApiState {
-            app: self.state.clone(),
-            db: Arc::new(db),
-            seen_nonces: Arc::new(Mutex::new(HashMap::new())),
-        };
-        // The ingress proxy strips the `/railyard` mount point, so the API
-        // only ever serves its own paths here.
-        let app = api_routes(&state)
-            .route("/healthz", get(healthz))
-            .with_state(state.clone());
-
-        let listener = tokio::net::TcpListener::bind(self.state.api_addr)
-            .await
-            .expect("failed to bind internal API listener");
-        let admin_listener = bind_admin_socket();
-
-        ready_notifier.notify_ready();
-
-        let mut tcp_shutdown = shutdown.clone();
-        let tcp = axum::serve(listener, app).with_graceful_shutdown(async move {
-            let _ = tcp_shutdown.changed().await;
-        });
-        let mut admin_shutdown = shutdown.clone();
-        let admin =
-            axum::serve(admin_listener, admin_routes(&state)).with_graceful_shutdown(async move {
-                let _ = admin_shutdown.changed().await;
-            });
-
-        let (tcp, admin) = tokio::join!(tcp, admin);
-        tcp.expect("API service exited with error");
-        admin.expect("admin socket service exited with error");
-    }
-}
-
-/// The local admin API: the server CLI's line to the daemon. Only the
-/// machine's admin can reach the socket (0600), so requests skip signature
-/// verification and act as an admin user.
-fn bind_admin_socket() -> tokio::net::UnixListener {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = crate::paths::admin_sock_path();
-    let _ = std::fs::remove_file(&path);
-    let listener =
-        tokio::net::UnixListener::bind(&path).expect("failed to bind admin socket listener");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-        .expect("failed to restrict admin socket permissions");
-    listener
-}
+use super::db::{AuthUser, Project, Release};
+use super::invite::mint_invite;
 
 /// Requests on the admin socket act as an admin user without signatures;
 /// the socket's file permissions are the trust boundary.
-fn admin_routes(state: &ApiState) -> Router {
+pub(super) fn admin_routes(state: &ApiState) -> Router {
     protected_routes()
         .layer(Extension(AuthUser {
             id: "local".to_string(),
@@ -98,13 +31,18 @@ fn admin_routes(state: &ApiState) -> Router {
         .with_state(state.clone())
 }
 
-fn api_routes(state: &ApiState) -> Router<ApiState> {
+/// The public surface, reached through the ingress proxy. The proxy strips
+/// the `/railyard` mount point, so the API only ever serves its own paths
+/// here.
+pub(super) fn signed_routes(state: &ApiState) -> Router {
     protected_routes()
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             verify_signature,
         ))
         .route(REDEEM_INVITE_PATH, post(redeem_invite))
+        .route("/healthz", get(healthz))
+        .with_state(state.clone())
 }
 
 /// Every authenticated route, shared by the signed TCP listener and the
@@ -154,9 +92,9 @@ async fn whoami(State(state): State<ApiState>, Extension(caller): Extension<Auth
 async fn root(State(state): State<ApiState>) -> String {
     format!(
         "Railyard API is running.\nproxy={}\napi={}\nservices={}",
-        state.app.proxy_addr,
-        state.app.api_addr,
-        state.app.service_upstreams.len()
+        state.config.proxy_addr,
+        state.config.api_addr,
+        state.config.service_upstreams.len()
     )
 }
 

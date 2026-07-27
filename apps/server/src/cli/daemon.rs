@@ -7,8 +7,8 @@ use std::{
     time::Duration,
 };
 
-use crate::http::run_server;
 use crate::paths::runtime_dir;
+use crate::server::run_server;
 
 pub(crate) fn up(foreground: bool) -> io::Result<()> {
     if let Some(pid) = read_running_pid() {

@@ -3,8 +3,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use railyard_auth::{InvitePayload, InviteProject, unix_timestamp};
 use std::{env, io, net::IpAddr, net::UdpSocket};
 
-use crate::db::{Db, token_hash};
-use crate::http::parsed_env;
+use super::db::{Db, token_hash};
+use crate::config::parsed_env;
 
 const INVITE_TTL_SECONDS: u64 = 24 * 60 * 60;
 

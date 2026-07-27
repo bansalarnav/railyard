@@ -1,27 +1,22 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     env, io,
     net::{IpAddr, SocketAddr},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
-use crate::db::Db;
-
+/// Process-wide configuration, read from the environment at startup and
+/// shared by both halves of the server: the ingress proxy routes with it,
+/// the API reports it.
 #[derive(Clone)]
-pub(crate) struct AppState {
+pub(crate) struct Config {
     pub(crate) proxy_addr: SocketAddr,
     pub(crate) api_addr: SocketAddr,
     pub(crate) service_upstreams: Arc<BTreeMap<String, SocketAddr>>,
 }
-#[derive(Clone)]
-pub(crate) struct ApiState {
-    pub(crate) app: AppState,
-    pub(crate) db: Arc<Db>,
-    pub(crate) seen_nonces: Arc<Mutex<HashMap<String, u64>>>,
-}
 
-impl AppState {
+impl Config {
     pub(crate) fn load() -> io::Result<Self> {
         let proxy_host: IpAddr =
             parsed_env("RAILYARD_PROXY_HOST", [0, 0, 0, 0].into(), "an IP address")?;

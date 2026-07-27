@@ -47,6 +47,7 @@ impl InvitePayload {
         serde_json::from_slice(&json).map_err(|_| InviteParseError)
     }
 }
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RedeemInviteRequest {
     pub invite_token: String,

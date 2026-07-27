@@ -1,14 +1,10 @@
-use async_trait::async_trait;
 use hyper::Uri;
-use pingora::Result;
 use pingora::http::RequestHeader;
-use pingora::proxy::{ProxyHttp, Session};
-use pingora::upstreams::peer::HttpPeer;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use super::state::AppState;
+use crate::config::Config;
 
 const API_LABEL: &str = "railyard";
 const API_PATH_PREFIX: &str = "/railyard";
@@ -20,23 +16,23 @@ pub(crate) struct RoutingTable {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RouteTarget {
-    upstream_addr: SocketAddr,
-    upstream_name: String,
+    pub(super) upstream_addr: SocketAddr,
+    pub(super) upstream_name: String,
     /// Set when the API was reached through `/railyard`: that prefix is a
     /// mount point, not part of the API's own paths, so it is stripped before
     /// the request is forwarded.
-    strip_api_prefix: bool,
+    pub(super) strip_api_prefix: bool,
 }
 
 impl RoutingTable {
-    pub(crate) fn from_state(state: &AppState) -> Self {
+    pub(crate) fn from_config(config: &Config) -> Self {
         Self {
-            api_addr: state.api_addr,
-            service_upstreams: state.service_upstreams.clone(),
+            api_addr: config.api_addr,
+            service_upstreams: config.service_upstreams.clone(),
         }
     }
 
-    fn route_for_request(&self, request: &RequestHeader) -> Option<RouteTarget> {
+    pub(super) fn route_for_request(&self, request: &RequestHeader) -> Option<RouteTarget> {
         let host = request_host(request);
         self.route_for(host.as_deref(), request.uri.path())
     }
@@ -61,58 +57,6 @@ impl RoutingTable {
     }
 }
 
-pub(crate) struct IngressProxy {
-    pub(crate) routes: RoutingTable,
-}
-
-#[async_trait]
-impl ProxyHttp for IngressProxy {
-    type CTX = Option<RouteTarget>;
-
-    fn new_ctx(&self) -> Self::CTX {
-        None
-    }
-
-    async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
-        *ctx = self.routes.route_for_request(session.req_header());
-        if ctx.is_none() {
-            session.respond_error(404).await?;
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    async fn upstream_peer(
-        &self,
-        _session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> Result<Box<HttpPeer>> {
-        let target = ctx.as_ref().expect("route was decided in request_filter");
-        Ok(Box::new(HttpPeer::new(
-            target.upstream_addr,
-            false,
-            String::new(),
-        )))
-    }
-
-    async fn upstream_request_filter(
-        &self,
-        _session: &mut Session,
-        upstream_request: &mut RequestHeader,
-        ctx: &mut Self::CTX,
-    ) -> Result<()> {
-        if let Some(target) = ctx {
-            upstream_request.insert_header("x-railyard-upstream", target.upstream_name.as_str())?;
-            if target.strip_api_prefix
-                && let Some(stripped) = strip_api_prefix(&upstream_request.uri)
-            {
-                upstream_request.set_uri(stripped);
-            }
-        }
-        Ok(())
-    }
-}
-
 fn is_api_path(path: &str) -> bool {
     path.strip_prefix(API_PATH_PREFIX)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
@@ -121,7 +65,7 @@ fn is_api_path(path: &str) -> bool {
 /// Drop the `/railyard` mount point so the API sees its own paths. The client
 /// signs the path relative to that mount, so this is what the signature
 /// covers. `/railyard` itself becomes `/`.
-fn strip_api_prefix(uri: &Uri) -> Option<Uri> {
+pub(super) fn strip_api_prefix(uri: &Uri) -> Option<Uri> {
     let path_and_query = uri.path_and_query()?.as_str();
     let rest = path_and_query.strip_prefix(API_PATH_PREFIX)?;
     let rest = if rest.is_empty() || rest.starts_with('?') {

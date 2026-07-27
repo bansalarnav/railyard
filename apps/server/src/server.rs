@@ -5,15 +5,15 @@ use pingora::services::background::background_service;
 use std::io;
 use std::path::Path;
 
-use super::api::ApiService;
-use super::proxy::{IngressProxy, RoutingTable};
-use super::state::AppState;
+use crate::api::ApiService;
+use crate::config::Config;
+use crate::proxy::{IngressProxy, RoutingTable};
 
 pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> io::Result<()> {
-    let state = AppState::load()?;
-    let proxy_addr = state.proxy_addr;
-    let api_addr = state.api_addr;
-    let routes = RoutingTable::from_state(&state);
+    let config = Config::load()?;
+    let proxy_addr = config.proxy_addr;
+    let api_addr = config.api_addr;
+    let routes = RoutingTable::from_config(&config);
 
     let opt = Opt {
         daemon,
@@ -23,7 +23,7 @@ pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> 
     let mut server = Server::new_with_opt_and_conf(Some(opt), conf);
     server.bootstrap();
 
-    let api_handle = server.add_service(background_service("api", ApiService { state }));
+    let api_handle = server.add_service(background_service("api", ApiService { config }));
 
     let mut proxy_service = http_proxy_service(&server.configuration, IngressProxy { routes });
     proxy_service.add_tcp(&proxy_addr.to_string());

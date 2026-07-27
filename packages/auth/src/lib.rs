@@ -19,6 +19,7 @@ pub const HEADER_TIMESTAMP: &str = "x-railyard-timestamp";
 pub const HEADER_NONCE: &str = "x-railyard-nonce";
 pub const HEADER_CONTENT_SHA256: &str = "x-railyard-content-sha256";
 pub const HEADER_SIGNATURE: &str = "x-railyard-signature";
+
 pub fn canonical_request(
     key_id: &str,
     timestamp: u64,
