@@ -131,6 +131,104 @@ and the now-active release; a `railyard config pull` writes the active release's
 back into the repo when the user decides the rollback is permanent — then *they* commit
 it. Silently editing the working tree would fight git.
 
+## Environments are refs
+
+*Designed, not built. Supersedes manifest `environments` overlays, removed in `2ed1a25`.*
+
+A project has one release DAG and **N named refs** over it. `production` always exists;
+`railyard up --env staging` creates or moves `staging`; a sandbox for a branch or an agent is
+just another ref with an expiry. Each ref has its own container set; the reconciler runs per
+`(ref, service)` instead of per service.
+
+```
+                #40 ── #41 ── #42 ── #43 ── #44
+                        ▲             ▲       ▲
+                        │             │       └── staging     (ref)
+                        │             └────────── production  (ref)
+                        └──────────────────────── agent-42    (ref, leased 24h)
+```
+
+**The load-bearing invariant: a release is environment-independent.** Nothing in
+`manifest_json` or `config_json` names an environment; `${{ secrets.X }}` stays symbolic and
+resolves against the ref's environment at container start. So any release is deployable under
+any ref, which is what makes the next paragraph a pointer move rather than a rebuild.
+
+**Promotion is a ref move.** `railyard promote staging production` points `production` at
+whatever release `staging` currently holds — no upload, no rebuild, the exact bits that were
+tested. Mechanically it is the same operation as `rollback` (both move a ref, both append to
+`activations`); only the ref name and the direction of travel differ.
+
+### What legitimately differs per environment
+
+Overlays are *authored* divergence: a second source of truth, kept in sync by hand, that
+silently changes what a release means depending on where it lands. Everything below is
+**derived by rule** instead, so it needs no manifest keys and cannot drift:
+
+| Divergence          | Mechanism                                                                 |
+| ------------------- | ------------------------------------------------------------------------- |
+| Secret **values**   | secrets are keyed `(project_id, env, name)`; names are the same everywhere |
+| Public domains      | `production` uses the manifest's `public.domains`; other refs get `<env>--<service>.<wildcard base>` from the server's wildcard domain. No wildcard configured → non-production refs are internal-only |
+| Scale               | non-production refs clamp to `replicas: 1`, autoscale off                  |
+| Volumes / data      | volumes are per ref, created empty (cheap CoW clone of the parent ref is a deferred want — see wrinkles) |
+
+Secret *names* being env-independent is what keeps validation honest: `up --env staging` fails
+before building if staging is missing a name the manifest references, listing exactly which.
+
+### Leases and reachability
+
+`production` and other long-lived refs are permanent. Sandbox refs carry `lease_until`;
+expiry stops their containers and drops the ref, no dashboard gardening. With refs generalized,
+GC generalizes too: a release is **live** if some ref reaches it within the retention policy, a
+build/volume/container is live if something live references it, everything else is collectible.
+Infra you cannot leak matters much more when most refs are created by agents rather than typed
+by hand.
+
+`--env` stays explicit per invocation and is never sticky state (see `cli.md`); `railyard envs`
+lists refs with their release, age, and remaining lease.
+
+## Servers are remotes
+
+*Designed, not built.*
+
+`init` deliberately keeps **one project ID across servers**. Combined with
+`bld_<sha256(project_id, source_hash, build_hash)>`, that means identical source produces an
+identical build ID on every box — so "does the target already have this object?" is answerable
+from the ID alone, with no registry and no coordination. That is exactly git's have/want
+negotiation, and it makes a second VPS a *remote* rather than an island.
+
+```
+hetzner                                        fra-1
+  refs/staging    → #44                          refs/production → #42
+  builds  B5 B7 B8 B9                            builds  B5 B7 B8
+
+        ──────────── railyard promote #44 --to fra-1 ────────────▶
+        want #44 → fra-1 answers "missing: rel #43,#44, bld B9"
+        send releases + service_release rows + B9 image + archived source
+        fra-1 verifies hashes, moves refs/production → #44
+```
+
+The transfer is the delta only, and it is **self-verifying**: the receiver recomputes
+`rel_<sha256(previous, manifest_json, secrets_json, message, created_by, created_at)>` down the
+chain and every `bld_` from its content, so tampering in flight or a mismatched project ID
+fails the push instead of landing.
+
+**Not transferred:** secrets, volumes and their data, containers, logs. The target resolves the
+spec with its *own* environment's secrets — which is the point (prod credentials never leave
+prod) and the one place a promotion can fail late, so the receiver validates referenced names
+up front, exactly as `up` does.
+
+This buys three things without a control plane: a dev/staging box promoting into a prod box; a
+warm standby that fetches objects but leaves its ref behind (a ref that is deliberately behind
+is the same state `secrets set --stage` already produces); and multi-region as a fan-out of the
+same push. Each server stays authoritative for its own refs — promotion is a push, not a global
+reconciliation loop, and there is no scheduler that owns the fleet.
+
+Wrinkles: bytes route through the client first (it is already authenticated to both ends, at the
+cost of a laptop round-trip for images) — direct server-to-server needs a delegated,
+project-scoped, expiring token. Platform mismatch (arm64 source box, amd64 target) must be
+checked against the image manifest before transfer and fall back to rebuilding on the target
+from the archived source.
+
 ## Desired vs actual: the reconciler
 
 Service releases describe **desired state only** (spec + build). Containers are **actual
@@ -205,6 +303,70 @@ symbolic. Why store it when the release already has `manifest_json`:
 `manifest_json` on the release remains the source-of-record of what the user wrote;
 `config_json` is the compiled artifact.
 
+## The plan
+
+*Designed, not built.*
+
+Every `up` prints a plan before it changes anything; `--dry-run` prints it and stops. Because
+source hashing happens server-side after unpack, the plan is computed **server-side**, against a
+specific head — it is a real object with an ID, not a client-side guess.
+
+The plan is a **dry-run of the reconciler**, not a parallel implementation of it: it calls the
+same `resolve()` and compares the same `resolved_hash`es, with the writes turned off. Anything
+else eventually drifts from what apply actually does, which is the failure mode that makes
+`terraform plan` output untrustworthy in other tools.
+
+```
+Plan for acme → production on hetzner
+  ref  production is at #42 (parent of this release) — fast-forward ✓
+  git  a1b2c3d on main, clean
+
+  api      rebuild       src 4f21e9a → 9c02b71   image builds
+  worker   rebuild       shares api's build       reuses bld_9c02b71
+  web      unchanged     —
+  db       config_only   memory 1Gi → 2Gi         restart, no build
+
+  collateral
+    cache  restart       DATABASE_URL resolves to a new address
+
+  secrets  STRIPE_SECRET_KEY changed since #42 (value hash differs)
+
+  destructive
+    mailer removed       container stopped, volume mailer-data retained 7d then GC'd
+
+  3 services change, 1 collateral restart, 1 destructive.
+```
+
+Four things the plan carries that a per-service action table alone cannot:
+
+- **The ref line.** Which ref is being moved, where it is now, and whether this release
+  fast-forwards it. A non-fast-forward is visible *before* the upload rather than as a rejection
+  after it, and it names who moved the ref.
+- **Blast radius.** The dependency graph is already implied by `${{ services.<name>.… }}`
+  references and `dependsOn`. A service is collateral-restarted exactly when its *resolved*
+  config changes even though its spec did not — a dependency's address moved, a secret rotated.
+  This is the class of change that surprises people today, because nothing in the release
+  history shows it (`action` describes spec changes only).
+- **Secrets by name, never by value.** `secrets_json` holds `{name: value_hash}`, so the plan
+  can say *which* secret drifted since the current head without reading any value.
+- **Destructive operations, called out separately.** Service removal, volume deletion, a domain
+  moving between services. The more `up` becomes a full sync of the manifest (no service
+  selection, no `--prune` opt-in), the more removals are implied by editing the file rather than
+  requested by a flag — which is the right trade, and exactly why they must be impossible to
+  miss in the plan.
+
+For non-humans, the plan is the contract:
+
+- `--json` emits a stable shape with `destructive: bool`, so an agent (or CI) can gate on it
+  without parsing prose.
+- Exit codes follow `terraform plan -detailed-exitcode`: `0` no changes, `2` changes pending,
+  `1` error. A no-op `up` is then machine-detectable, which is what makes agent retry loops safe.
+- `up --apply <plan_id>` applies **exactly** the plan that was shown, and fails if the ref has
+  moved since it was computed. That is the same compare-and-swap the ref already needs, and it
+  is what an approval gate ("agent proposes, human applies") is built out of. Plans are
+  disposable — recomputing is cheap — so they can live in memory with a short TTL rather than in
+  a table.
+
 ## Secrets
 
 Project-level, mutable, unversioned KV store (versioning deliberately deferred).
@@ -264,6 +426,15 @@ Stays in libsql/SQLite alongside the existing tables.
 projects (
   ...existing columns...,
   active_release   TEXT                -- the ref; NULL before first release
+)                                      -- dropped once `refs` lands: it is refs['production']
+
+refs (                                 -- one row per environment; generalizes the single
+  project_id       TEXT NOT NULL,      --   projects.active_release column above
+  name             TEXT NOT NULL,      -- UNIQUE(project_id, name): production|staging|agent-42
+  release_id       TEXT,               -- NULL before this ref's first release
+  lease_until      INTEGER,            -- NULL = permanent; expiry reaps ref + containers
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
 )
 
 releases (
@@ -283,8 +454,9 @@ releases (
 
 activations (                          -- the reflog; append-only
   project_id       TEXT NOT NULL,
+  ref_name         TEXT NOT NULL,      -- which ref moved
   release_id       TEXT NOT NULL,
-  activated_by     TEXT,               -- user id, or 'up' | 'rollback' | 'auto-rollback'
+  activated_by     TEXT,               -- user id, or 'up' | 'rollback' | 'promote' | 'auto-rollback'
   activated_at     INTEGER NOT NULL
 )
 
@@ -312,6 +484,7 @@ builds (
 containers (                           -- actual state
   id               TEXT PRIMARY KEY,   -- ctr_<hex>
   project_id       TEXT NOT NULL,
+  ref_name         TEXT NOT NULL,      -- which environment this container belongs to
   service_name     TEXT NOT NULL,
   build_id         TEXT,
   resolved_hash    TEXT NOT NULL,      -- hash of the FULLY resolved config at start
@@ -325,7 +498,8 @@ containers (                           -- actual state
 
 secrets (
   project_id       TEXT NOT NULL,
-  name             TEXT NOT NULL,      -- UNIQUE(project_id, name)
+  env              TEXT NOT NULL,      -- UNIQUE(project_id, env, name); names match across envs
+  name             TEXT NOT NULL,
   value            BLOB NOT NULL,      -- encrypted at rest
   updated_by       TEXT,
   updated_at       INTEGER NOT NULL
@@ -342,6 +516,11 @@ Notably absent, on purpose:
 - **No `config_hash` on containers.** Redundant with `resolved_hash` + provenance join.
 - **No per-row deploy status on service_releases.** Deploy-attempt outcomes live with
   containers and activations.
+- **No `plans` table.** A plan is derived from (uploaded source, head, current secrets) and is
+  cheap to recompute; persisting it would create a second, staler source of truth about
+  desired state. Short-lived in memory, keyed by `plan_id`, revalidated against the ref at apply.
+- **No `env` on releases or service_releases.** Releases are environment-independent by
+  construction — that is what makes promotion a ref move instead of a rebuild.
 
 The current `releases` table is already the upload-receipt subset of this shape:
 id, project_id, status, message, error, timestamps. Growing it into
@@ -362,3 +541,14 @@ the table above means adding `seq` (backfilled by `created_at` order), `previous
   change.
 - **`railyard releases --verbose`** should eventually print something like the timeline
   table above.
+- **Copy-on-write data for sandbox refs.** A new ref starts with empty volumes today, which
+  makes sandboxes cheap but not realistic. On btrfs/ZFS a ref could instead start from a CoW
+  snapshot of its parent ref's volumes: near-instant, near-zero disk, reaped with the lease.
+  This is what would make per-branch and per-agent environments genuinely useful, and it needs
+  no model changes — only volume provisioning that is aware of `refs`.
+- **Direct server-to-server transfer.** Promotion routes objects through the client first,
+  since it already holds credentials for both ends. Box-to-box needs a delegated,
+  project-scoped, expiring token; the object protocol itself does not change.
+- **Ref protection.** Which identities may move which refs (an agent key that owns `staging`
+  but may only *propose* a `production` move) belongs with auth, not here — but it is the
+  reason ref moves are a single, auditable operation in the first place.
