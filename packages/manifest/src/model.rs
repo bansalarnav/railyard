@@ -16,8 +16,9 @@ pub struct RailyardManifest {
     pub github: Option<GithubLink>,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     pub services: IndexMap<String, Service>,
-    #[serde(skip_serializing_if = "IndexMap::is_empty")]
-    pub environments: IndexMap<String, serde_json::Value>,
+    // Environments are intentionally disabled for now.
+    // #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    // pub environments: IndexMap<String, serde_json::Value>,
 }
 
 impl Default for RailyardManifest {
@@ -27,7 +28,7 @@ impl Default for RailyardManifest {
             project: None,
             github: None,
             services: IndexMap::new(),
-            environments: IndexMap::new(),
+            // environments: IndexMap::new(),
         }
     }
 }

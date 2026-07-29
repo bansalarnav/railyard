@@ -52,35 +52,36 @@ pub fn parse_relaxed(input: &str) -> Result<RailyardManifest, ManifestError> {
 fn parse_raw(raw: serde_json::Value) -> Result<RailyardManifest, ManifestError> {
     let manifest = parse_value(raw)?;
 
-    let mut errors = Vec::new();
-    for name in manifest.environments.keys() {
-        match manifest.resolve_environment(name) {
-            Ok(_) => {}
-            Err(ManifestError::Invalid(env_errors)) => {
-                errors.extend(env_errors.into_iter().map(|error| {
-                    ValidationError::new(
-                        format!("environments.{name}.{}", error.path),
-                        error.message,
-                    )
-                }));
-            }
-            Err(ManifestError::Shape { path, message }) => {
-                errors.push(ValidationError::new(
-                    format!("environments.{name}.{path}"),
-                    message,
-                ));
-            }
-            Err(ManifestError::Syntax(message)) => {
-                errors.push(ValidationError::new(
-                    format!("environments.{name}"),
-                    message,
-                ));
-            }
-        }
-    }
-    if !errors.is_empty() {
-        return Err(ManifestError::Invalid(errors));
-    }
+    // Environment overlays are intentionally disabled for now.
+    // let mut errors = Vec::new();
+    // for name in manifest.environments.keys() {
+    //     match manifest.resolve_environment(name) {
+    //         Ok(_) => {}
+    //         Err(ManifestError::Invalid(env_errors)) => {
+    //             errors.extend(env_errors.into_iter().map(|error| {
+    //                 ValidationError::new(
+    //                     format!("environments.{name}.{}", error.path),
+    //                     error.message,
+    //                 )
+    //             }));
+    //         }
+    //         Err(ManifestError::Shape { path, message }) => {
+    //             errors.push(ValidationError::new(
+    //                 format!("environments.{name}.{path}"),
+    //                 message,
+    //             ));
+    //         }
+    //         Err(ManifestError::Syntax(message)) => {
+    //             errors.push(ValidationError::new(
+    //                 format!("environments.{name}"),
+    //                 message,
+    //             ));
+    //         }
+    //     }
+    // }
+    // if !errors.is_empty() {
+    //     return Err(ManifestError::Invalid(errors));
+    // }
     Ok(manifest)
 }
 fn parse_value(raw: serde_json::Value) -> Result<RailyardManifest, ManifestError> {
@@ -97,28 +98,29 @@ fn parse_value(raw: serde_json::Value) -> Result<RailyardManifest, ManifestError
 }
 
 impl RailyardManifest {
-    pub fn resolve_environment(&self, name: &str) -> Result<RailyardManifest, ManifestError> {
-        let overlay = self.environments.get(name).ok_or_else(|| {
-            ManifestError::Invalid(vec![ValidationError::new(
-                "environments",
-                format!("no environment named `{name}`"),
-            )])
-        })?;
-        if !overlay.is_object() {
-            return Err(ManifestError::Invalid(vec![ValidationError::new(
-                format!("environments.{name}"),
-                "an environment overlay must be an object",
-            )]));
-        }
-
-        let mut base =
-            serde_json::to_value(self).map_err(|err| ManifestError::Syntax(err.to_string()))?;
-        base.as_object_mut()
-            .expect("manifest always serializes to an object")
-            .remove("environments");
-        deep_merge(&mut base, overlay);
-        parse_value(base)
-    }
+    // Environment overlays are intentionally disabled for now.
+    // pub fn resolve_environment(&self, name: &str) -> Result<RailyardManifest, ManifestError> {
+    //     let overlay = self.environments.get(name).ok_or_else(|| {
+    //         ManifestError::Invalid(vec![ValidationError::new(
+    //             "environments",
+    //             format!("no environment named `{name}`"),
+    //         )])
+    //     })?;
+    //     if !overlay.is_object() {
+    //         return Err(ManifestError::Invalid(vec![ValidationError::new(
+    //             format!("environments.{name}"),
+    //             "an environment overlay must be an object",
+    //         )]));
+    //     }
+    //
+    //     let mut base =
+    //         serde_json::to_value(self).map_err(|err| ManifestError::Syntax(err.to_string()))?;
+    //     base.as_object_mut()
+    //         .expect("manifest always serializes to an object")
+    //         .remove("environments");
+    //     deep_merge(&mut base, overlay);
+    //     parse_value(base)
+    // }
     pub fn to_json_string(&self) -> String {
         let mut out =
             serde_json::to_string_pretty(self).expect("manifest always serializes cleanly");
@@ -147,20 +149,20 @@ impl RailyardManifest {
     }
 }
 
-fn deep_merge(base: &mut serde_json::Value, overlay: &serde_json::Value) {
-    match (base, overlay) {
-        (serde_json::Value::Object(base), serde_json::Value::Object(overlay)) => {
-            for (key, value) in overlay {
-                if value.is_null() {
-                    base.remove(key);
-                } else {
-                    deep_merge(
-                        base.entry(key.clone()).or_insert(serde_json::Value::Null),
-                        value,
-                    );
-                }
-            }
-        }
-        (base, overlay) => *base = overlay.clone(),
-    }
-}
+// fn deep_merge(base: &mut serde_json::Value, overlay: &serde_json::Value) {
+//     match (base, overlay) {
+//         (serde_json::Value::Object(base), serde_json::Value::Object(overlay)) => {
+//             for (key, value) in overlay {
+//                 if value.is_null() {
+//                     base.remove(key);
+//                 } else {
+//                     deep_merge(
+//                         base.entry(key.clone()).or_insert(serde_json::Value::Null),
+//                         value,
+//                     );
+//                 }
+//             }
+//         }
+//         (base, overlay) => *base = overlay.clone(),
+//     }
+// }
