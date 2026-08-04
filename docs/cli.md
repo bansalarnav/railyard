@@ -154,7 +154,10 @@ with a new ID.
 the existing link and exits 0, pointing at `railyard unlink` for moving to another server
 (`--server` naming a different server errors with the same hint). Run in a subdirectory of
 an existing project (a manifest in an ancestor directory), `init` asks for confirmation
-before scaffolding a separate nested project; non-interactive runs error.
+before scaffolding a separate nested project; non-interactive runs error. Scaffolding
+outside a git repository (no `.git` in this directory or any ancestor) also asks for
+confirmation — git is not required, but `up` labels releases with the latest commit
+subject — and declining suggests `git init`; non-interactive runs print a note and proceed.
 
 `init` is also where a server gets **chosen**. `--server <name>` wins. With exactly one
 known server, use it and print the target

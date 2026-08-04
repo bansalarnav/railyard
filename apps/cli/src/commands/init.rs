@@ -34,6 +34,7 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
         }
         None => {
             confirm_nested_init(&cwd, ctx)?;
+            confirm_init_outside_git(&cwd, ctx)?;
             (cwd.join(MANIFEST_FILE), RailyardManifest::default(), None)
         }
     };
@@ -216,6 +217,30 @@ fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error
         .interact()?;
     if !confirmed {
         return Err("init cancelled".into());
+    }
+    Ok(())
+}
+
+/// Railyard doesn't require git, but a checkout is what makes releases
+/// traceable — `up` labels each one with the latest commit subject — so a
+/// directory outside a repository is worth a second look before scaffolding.
+fn confirm_init_outside_git(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+    if cwd.ancestors().any(|dir| dir.join(".git").exists()) {
+        return Ok(());
+    }
+    if !ctx.interactive {
+        eprintln!("note: {} is not in a git repository", cwd.display());
+        return Ok(());
+    }
+    let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(
+            "This directory is not in a git repository, and Railyard works best in one. Create a \
+             project here anyway?",
+        )
+        .default(false)
+        .interact()?;
+    if !confirmed {
+        return Err("init cancelled; run `git init` first, then rerun `railyard init`".into());
     }
     Ok(())
 }
