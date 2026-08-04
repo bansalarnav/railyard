@@ -9,3 +9,5 @@ It has a server/client architecture:
 - After global initialization, every normal operation should be possible from the local CLI.
 
 Keep code simple, readable, and direct. Do not add tests unless explicitly asked.
+
+This project is pre-release and has no users yet. Do not maintain backwards compatibility unless explicitly asked, because preserving old behavior adds unnecessary complexity at this stage.
