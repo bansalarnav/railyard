@@ -191,7 +191,6 @@ pub struct PublicOptions {
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub domains: Vec<String>,
-    pub path: Option<String>,
 }
 
 #[skip_serializing_none]

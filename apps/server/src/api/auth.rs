@@ -125,8 +125,7 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| "signature is not base64 ed25519".to_string())?;
 
-    // The client signs the path relative to the API's mount point, which is
-    // exactly what arrives here once the proxy has stripped `/railyard`.
+    // The client signs the request path and query exactly as they arrive here.
     let uri = &parts.uri;
     let host = match parts.headers.get("host").and_then(|v| v.to_str().ok()) {
         Some(host) => host.to_string(),

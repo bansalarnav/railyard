@@ -31,7 +31,7 @@ ryd-invite-v1.<base64url JSON>
 ```
 
 The JSON payload is self-describing: `server_url`, `server_name` (the server's human name —
-`RAILYARD_SERVER_NAME` env or the box's hostname — since `server_url` is often a bare IP),
+`RAILYARD_SERVER_NAME` env or the box's hostname — kept independent of its generated URL),
 the invited user's id and name, `invite_token`, `expires_at`, and for project-scoped invites
 the project id and name. The client derives the profile name from these: project name, else
 server name, else the URL host. Properties:
@@ -93,10 +93,8 @@ The canonical request (defined in `packages/auth`, shared by client and server) 
 key id, timestamp, nonce, method, path + query, host, and body hash, so none of those can be
 tampered with in transit.
 
-The signed path is relative to the API's mount point, not the URL as sent. A server reached
-at `http://host/railyard` signs `/api/users`, because the ingress proxy strips `/railyard`
-before forwarding — so a path-mounted server and a host-routed one (`railyard.host/api/users`)
-produce the same canonical request.
+The request path and query parameters are signed exactly as sent. Fragments never leave the
+client and are not signed.
 
 ## Authorization
 

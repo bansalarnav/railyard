@@ -31,9 +31,8 @@ pub(super) fn admin_routes(state: &ApiState) -> Router {
         .with_state(state.clone())
 }
 
-/// The public surface, reached through the ingress proxy. The proxy strips
-/// the `/railyard` mount point, so the API only ever serves its own paths
-/// here.
+/// The public surface, selected by the control plane's hostname at the
+/// ingress proxy.
 pub(super) fn signed_routes(state: &ApiState) -> Router {
     protected_routes()
         .route_layer(middleware::from_fn_with_state(
@@ -184,7 +183,7 @@ async fn create_user(
         },
     };
 
-    match mint_invite(&state.db, &request.name, project).await {
+    match mint_invite(&state.db, &state.config.server_url, &request.name, project).await {
         Ok(minted) => {
             log::info!(
                 "admin {} created user {} ({})",

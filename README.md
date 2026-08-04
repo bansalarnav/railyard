@@ -30,7 +30,7 @@ Run the server inside the Ubuntu dev container with hot reload:
 ./dev-server
 ```
 
-The container only publishes the server port on `3000`. For local dev, the dashboard URL is `http://127.0.0.1:3000/railyard`.
+The container only publishes the server port on `3000`. For local dev, the dashboard URL is `http://railyard.127-0-0-1.nip.io:3000`.
 
 On the first run, the dev server creates an admin user and logs the local CLI in
 automatically. Run authenticated client commands from another terminal with:
@@ -54,6 +54,11 @@ default to `$XDG_STATE_HOME/railyard/server` (or
 
 ## Dev Routing
 
-The proxy listens on `0.0.0.0:3000` by default. Requests whose path starts with `/railyard`, or whose hostname starts with the `railyard.` label, are forwarded to the internal API on `127.0.0.1:3001`. Other hostnames are matched against service upstreams configured via `RAILYARD_CONTAINER_UPSTREAM_<NAME>` env vars (e.g. `RAILYARD_CONTAINER_UPSTREAM_WEB=127.0.0.1:4000` routes `web.*` hosts there); unmatched requests get a 404.
+The proxy listens on `0.0.0.0:3000` by default. Requests for the generated `railyard.<public-ip>.nip.io` hostname are forwarded to the internal API on `127.0.0.1:3001`. Other hostnames are matched against service upstreams configured via `RAILYARD_CONTAINER_UPSTREAM_<NAME>` env vars (e.g. `RAILYARD_CONTAINER_UPSTREAM_WEB=127.0.0.1:4000` routes `web.*` hosts there); unmatched requests get a 404.
 
 Use `RAILYARD_PROXY_HOST`, `RAILYARD_PROXY_PORT`, `RAILYARD_API_HOST`, and `RAILYARD_API_PORT` to change those bind addresses when needed.
+
+The server advertises itself to clients as `http://railyard.<public-ip>.nip.io:3000` by
+default. It uses the machine's routed IPv4 address when that address is public, then falls
+back to external discovery for NAT-based networks. Set `RAILYARD_PUBLIC_IP` to override
+automatic discovery.

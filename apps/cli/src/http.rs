@@ -195,8 +195,8 @@ async fn signed_request_with_type(
 ) -> Result<Response, Box<dyn Error>> {
     let signing_key = read_signing_key(&server.private_key_path)?;
     let server_url = Url::parse(&server.server_url)?;
-    let request_url = control_plane_api_url(server_url.clone(), suffix)?;
-    let path_and_query = signed_path(&server_url, &request_url);
+    let request_url = control_plane_api_url(server_url, suffix)?;
+    let path_and_query = request_url[url::Position::BeforePath..].to_string();
     let host = request_url
         .host_str()
         .ok_or("server URL is missing a host")?
@@ -231,48 +231,16 @@ async fn signed_request_with_type(
     Ok(request.send().await?)
 }
 
-/// The path the signature covers: everything after the server URL's own path,
-/// so a server mounted at `http://host/railyard` signs `/api/users` rather
-/// than `/railyard/api/users`. The proxy strips that mount point on the way
-/// in, so this is the path the server verifies against — and it makes a
-/// host-routed server and a path-mounted one sign identically.
-fn signed_path(base_url: &Url, request_url: &Url) -> String {
-    let full = &request_url[url::Position::BeforePath..];
-    let mount = base_url.path().trim_end_matches('/');
-    if mount.is_empty() {
-        return full.to_string();
-    }
-    match full.strip_prefix(mount) {
-        Some(rest) if rest.is_empty() || rest.starts_with('?') => format!("/{rest}"),
-        Some(rest) => rest.to_string(),
-        None => full.to_string(),
-    }
-}
-
 fn control_plane_api_url(mut base_url: Url, suffix: &str) -> Result<Url, Box<dyn Error>> {
     let (suffix, query) = match suffix.split_once('?') {
         Some((path, query)) => (path, Some(query)),
         None => (suffix, None),
     };
-    let existing_segments: Vec<String> = base_url
-        .path_segments()
-        .map(|segments| {
-            segments
-                .filter(|segment| !segment.is_empty())
-                .map(ToOwned::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-
     {
         let mut segments = base_url
             .path_segments_mut()
             .map_err(|_| "server URL cannot be a cannot-be-a-base URL")?;
         segments.clear();
-
-        for segment in &existing_segments {
-            segments.push(segment);
-        }
 
         for segment in suffix.split('/') {
             if !segment.is_empty() {

@@ -13,6 +13,7 @@ pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> 
     let config = Config::load()?;
     let proxy_addr = config.proxy_addr;
     let api_addr = config.api_addr;
+    let server_url = config.server_url.clone();
     let routes = RoutingTable::from_config(&config);
 
     let opt = Opt {
@@ -33,7 +34,7 @@ pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> 
 
     println!("Starting railyard ingress on http://{proxy_addr}");
     println!("Internal API bound to http://{api_addr}");
-    println!("Dashboard URL: http://{proxy_addr}/railyard");
+    println!("Dashboard URL: {server_url}");
 
     server.run_forever()
 }

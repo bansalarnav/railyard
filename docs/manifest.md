@@ -130,7 +130,7 @@ reachable from the internet unless it declares `public`.
 | Key | Type | Notes |
 | --- | --- | --- |
 | `port` | number | The port the app listens on. Required if the service is `public` or referenced via `${{ services.x.url }}`; optional otherwise (image `EXPOSE` used as fallback). |
-| `public` | `true` \| object | Omitted = internal only. `true` = auto subdomain `<service>-<project>.<server-base-domain>`. Object form: `domain` or `domains` (custom domains pointed at the VPS; the server proxy terminates TLS and routes by Host header), optional `path` prefix for path-based routing on a shared domain. |
+| `public` | `true` \| object | Omitted = internal only. `true` = auto subdomain `<service>.<project>.<server-base-domain>`. Object form: `domain` or `domains` (custom domains pointed at the VPS; the server proxy terminates TLS and routes by Host header). |
 
 ### How internal networking works
 

@@ -10,7 +10,7 @@ pub const REDEEM_INVITE_PATH: &str = "/api/auth/redeem-invite";
 pub struct InvitePayload {
     pub server_url: String,
     /// Human name of the server (its hostname unless overridden), used by the
-    /// client to derive a profile name since `server_url` is often a bare IP.
+    /// client to derive a stable profile name independently of `server_url`.
     pub server_name: String,
     /// The user this invite belongs to, so the client can detect when a
     /// different local identity already has the same access.

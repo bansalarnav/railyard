@@ -62,10 +62,11 @@ VPSes has two server entries; project-to-server bindings are stored separately i
 client config.
 
 Server names are derived from the invite payload, so the common path needs no flag. Since
-`server_url` is realistically a bare IP, the server carries a human name and embeds it in
-every invite it mints: set with `railyard server setup --name hetzner` (or later via server
-config), defaulting to the box's OS hostname. If the invite has no usable name, `login` falls
-back to the URL host. `railyard login --name <name>` overrides the local name explicitly.
+`server_url` may be generated from the server's public IP, the server carries a human name and
+embeds it in every invite it mints: set with `railyard server setup --name hetzner` (or later
+via server config), defaulting to the box's OS hostname. If the invite has no usable name,
+`login` falls back to the URL host. `railyard login --name <name>` overrides the local name
+explicitly.
 
 There is no magic `default` server — a name like `default` carries no information the day a
 second server shows up, and the "I only have one server" case is already handled by

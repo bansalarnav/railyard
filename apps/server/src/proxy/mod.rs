@@ -10,7 +10,7 @@ use pingora::http::RequestHeader;
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 
-use routing::{RouteTarget, strip_api_prefix};
+use routing::RouteTarget;
 
 pub(crate) use routing::RoutingTable;
 
@@ -56,11 +56,6 @@ impl ProxyHttp for IngressProxy {
     ) -> Result<()> {
         if let Some(target) = ctx {
             upstream_request.insert_header("x-railyard-upstream", target.upstream_name.as_str())?;
-            if target.strip_api_prefix
-                && let Some(stripped) = strip_api_prefix(&upstream_request.uri)
-            {
-                upstream_request.set_uri(stripped);
-            }
         }
         Ok(())
     }
