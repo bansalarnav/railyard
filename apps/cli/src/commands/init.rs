@@ -1,6 +1,6 @@
+use anyhow::{Result, anyhow};
 use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use railyard_manifest::RailyardManifest;
-use std::error::Error;
 use std::path::Path;
 use std::{env, fs};
 
@@ -21,7 +21,7 @@ pub(crate) struct Args {
     server: Option<String>,
 }
 
-pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<()> {
     let Args {
         name,
         server: server_flag,
@@ -50,12 +50,11 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
                 if let Some(requested) = &server_flag
                     && *requested != bound_name
                 {
-                    return Err(format!(
+                    return Err(anyhow!(
                         "project {} ({id}) is already linked to {bound_name}; run `railyard \
                          unlink` first to link it to another server",
                         project.name
-                    )
-                    .into());
+                    ));
                 }
                 println!(
                     "Project {} ({id}) is already linked to {bound_name} — nothing to do.",
@@ -85,12 +84,11 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
         let projects = http::list_projects(&server).await?;
         if let Some(server_project) = projects.into_iter().find(|project| project.id == *id) {
             if !ctx.interactive {
-                return Err(format!(
+                return Err(anyhow!(
                     "project {} ({id}) already exists on {server_name}; rerun `railyard init` \
                      interactively to link this directory or create a new project",
                     server_project.name
-                )
-                .into());
+                ));
             }
 
             let choices = [
@@ -164,11 +162,7 @@ fn manifest_name(path: &Path) -> String {
 /// Linking re-serializes the whole manifest as plain JSON, so comments in a
 /// relaxed-syntax file can't survive; say so rather than dropping them
 /// silently.
-fn write_manifest(
-    path: &Path,
-    manifest: &RailyardManifest,
-    raw: Option<&str>,
-) -> Result<(), Box<dyn Error>> {
+fn write_manifest(path: &Path, manifest: &RailyardManifest, raw: Option<&str>) -> Result<()> {
     fs::write(path, manifest.to_json_string())?;
     if let Some(raw) = raw
         && serde_json::from_str::<serde_json::Value>(raw).is_err()
@@ -184,7 +178,7 @@ fn write_manifest(
 /// Scaffolding a manifest inside an existing project's tree is almost
 /// always `init` run from the wrong directory, so ask before creating a
 /// nested project.
-fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<()> {
     let Some(parent) = cwd.parent() else {
         return Ok(());
     };
@@ -200,12 +194,11 @@ fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error
         .unwrap_or_default();
 
     if !ctx.interactive {
-        return Err(format!(
+        return Err(anyhow!(
             "found {}{project} in a parent directory; init here would create a separate \
              nested project — run it from that directory, or rerun interactively to confirm",
             found.display()
-        )
-        .into());
+        ));
     }
     let confirmed = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt(format!(
@@ -216,7 +209,7 @@ fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error
         .default(false)
         .interact()?;
     if !confirmed {
-        return Err("init cancelled".into());
+        return Err(anyhow!("init cancelled"));
     }
     Ok(())
 }
@@ -224,7 +217,7 @@ fn confirm_nested_init(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error
 /// Railyard doesn't require git, but a checkout is what makes releases
 /// traceable — `up` labels each one with the latest commit subject — so a
 /// directory outside a repository is worth a second look before scaffolding.
-fn confirm_init_outside_git(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+fn confirm_init_outside_git(cwd: &Path, ctx: ExecContext) -> Result<()> {
     if cwd.ancestors().any(|dir| dir.join(".git").exists()) {
         return Ok(());
     }
@@ -240,7 +233,9 @@ fn confirm_init_outside_git(cwd: &Path, ctx: ExecContext) -> Result<(), Box<dyn 
         .default(false)
         .interact()?;
     if !confirmed {
-        return Err("init cancelled; run `git init` first, then rerun `railyard init`".into());
+        return Err(anyhow!(
+            "init cancelled; run `git init` first, then rerun `railyard init`"
+        ));
     }
     Ok(())
 }
@@ -253,17 +248,16 @@ fn resolve_project_name(
     manifest: &RailyardManifest,
     manifest_exists: bool,
     ctx: ExecContext,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<String> {
     let manifest_name = manifest.project.as_ref().map(|p| p.name.clone());
 
     if let Some(raw) = explicit {
         if let Some(existing) = manifest_name
             && existing != raw
         {
-            return Err(format!(
+            return Err(anyhow!(
                 "{MANIFEST_FILE} already names this project {existing}; rerun without a name or edit the file"
-            )
-            .into());
+            ));
         }
         return Ok(raw);
     }
@@ -279,10 +273,9 @@ fn resolve_project_name(
         .unwrap_or_default();
     let name = sanitize_project_name(dir_name);
     if name.is_empty() {
-        return Err(
+        return Err(anyhow!(
             "could not derive a project name from this directory; run `railyard init <name>`"
-                .into(),
-        );
+        ));
     }
     if !manifest_exists && ctx.interactive {
         return Ok(Input::with_theme(&ColorfulTheme::default())
@@ -312,7 +305,7 @@ fn sanitize_project_name(raw: &str) -> String {
 fn resolve_server_for_init(
     explicit: Option<String>,
     ctx: ExecContext,
-) -> Result<(String, ServerConfig), Box<dyn Error>> {
+) -> Result<(String, ServerConfig)> {
     let mut servers = list_servers()?;
     if explicit.is_some() || servers.len() < 2 || !ctx.interactive {
         return resolve_server(explicit);

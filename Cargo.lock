@@ -120,6 +120,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2332,6 +2338,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "railyard"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64",
  "clap",
  "dialoguer",
@@ -2356,6 +2363,7 @@ dependencies = [
 name = "railyard-auth"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64",
  "serde",
  "serde_json",
@@ -2365,6 +2373,7 @@ dependencies = [
 name = "railyard-manifest"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "indexmap 2.13.1",
  "json5",
  "serde",
@@ -2377,6 +2386,7 @@ dependencies = [
 name = "railyard-server"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "axum",
  "base64",

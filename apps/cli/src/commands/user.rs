@@ -1,6 +1,6 @@
+use anyhow::{Result, anyhow};
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use railyard_auth::unix_timestamp;
-use std::error::Error;
 
 use crate::config::{ServerConfig, list_servers, read_server};
 use crate::context::ExecContext;
@@ -40,7 +40,7 @@ enum Command {
     },
 }
 
-pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<()> {
     match args.command {
         Command::Add {
             name,
@@ -56,28 +56,22 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
 /// which server entry to use, like every other project command. `--admin`
 /// switches to a server-wide (admin) invite. Either way the server only
 /// honors the request from an admin key.
-async fn add(
-    name: &str,
-    admin: bool,
-    server_flag: Option<String>,
-    ctx: ExecContext,
-) -> Result<(), Box<dyn Error>> {
+async fn add(name: &str, admin: bool, server_flag: Option<String>, ctx: ExecContext) -> Result<()> {
     if admin {
         return add_admin(name, server_flag, ctx).await;
     }
 
     let Some(project) = confirmed_linked_project(ctx)? else {
-        return Err(format!(
+        return Err(anyhow!(
             "no project linked in this directory ({MANIFEST_FILE} with a project.id); run \
              `railyard init` first, or pass --admin to invite someone to a whole server"
-        )
-        .into());
+        ));
     };
 
     let (server_name, server) = match server_flag {
         Some(server_name) => {
             let server = read_server(&server_name)
-                .map_err(|error| format!("could not read server {server_name}: {error}"))?;
+                .map_err(|error| anyhow!("could not read server {server_name}: {error}"))?;
             (server_name, server)
         }
         None => resolve_project_server(&project, ctx).await?,
@@ -91,11 +85,7 @@ async fn add(
     Ok(())
 }
 
-async fn add_admin(
-    name: &str,
-    server_flag: Option<String>,
-    ctx: ExecContext,
-) -> Result<(), Box<dyn Error>> {
+async fn add_admin(name: &str, server_flag: Option<String>, ctx: ExecContext) -> Result<()> {
     let (server_name, server) = resolve_admin_server(server_flag, ctx).await?;
     let created = http::create_user(&server, name, None).await?;
     println!("Created admin user {name} with access to all of {server_name}.");
@@ -109,7 +99,7 @@ fn print_invite(blob: &str) {
     println!("{blob}");
 }
 
-async fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+async fn list(server_flag: Option<String>) -> Result<()> {
     let (server_name, server) = resolve_server(server_flag)?;
     let users = http::list_users(&server).await?;
     if users.is_empty() {
@@ -133,7 +123,7 @@ async fn list(server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn remove(name: &str, server_flag: Option<String>) -> Result<(), Box<dyn Error>> {
+async fn remove(name: &str, server_flag: Option<String>) -> Result<()> {
     let (server_name, server) = resolve_server(server_flag)?;
     if http::remove_user(&server, name).await? {
         println!("Removed user {name} from {server_name} and revoked its keys.");
@@ -159,7 +149,7 @@ fn format_age(seconds: u64) -> String {
 async fn resolve_admin_server(
     explicit: Option<String>,
     ctx: ExecContext,
-) -> Result<(String, ServerConfig), Box<dyn Error>> {
+) -> Result<(String, ServerConfig)> {
     let servers = list_servers()?;
     if explicit.is_some() || servers.len() < 2 || !ctx.interactive {
         return resolve_server(explicit);
@@ -172,11 +162,10 @@ async fn resolve_admin_server(
         }
     }
     match candidates.len() {
-        0 => Err(
+        0 => Err(anyhow!(
             "none of your servers answered with an admin identity, and only admins can mint \
              invites; check `railyard whoami`"
-                .into(),
-        ),
+        )),
         1 => {
             let (name, server) = candidates.remove(0);
             let confirmed = Confirm::with_theme(&ColorfulTheme::default())
@@ -188,7 +177,9 @@ async fn resolve_admin_server(
                 .default(true)
                 .interact()?;
             if !confirmed {
-                return Err("no server chosen; pass --server <name> to pick one".into());
+                return Err(anyhow!(
+                    "no server chosen; pass --server <name> to pick one"
+                ));
             }
             Ok((name, server))
         }

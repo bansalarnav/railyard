@@ -10,6 +10,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+anyhow = "1"
 railyard-auth = { path = "packages/auth" }
 railyard-manifest = { path = "packages/manifest" }
 railyard-types = { path = "packages/types" }

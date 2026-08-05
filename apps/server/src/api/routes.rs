@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow, bail};
 use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
@@ -17,7 +18,7 @@ use std::io;
 use super::ApiState;
 use super::auth::{SignedContentHash, redeem_invite, verify_body_hash, verify_signature};
 use super::db::{AuthUser, Project, Release};
-use super::invite::mint_invite;
+use super::invite::{mint_invite, validated_name};
 
 /// Requests on the admin socket act as an admin user without signatures;
 /// the socket's file permissions are the trust boundary.
@@ -135,10 +136,8 @@ async fn create_project(
         .create_project(&request.name, request.id.as_deref(), unix_timestamp())
         .await
     {
-        Ok(project) => Json(project_summary(project)).into_response(),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            (StatusCode::CONFLICT, error.to_string()).into_response()
-        }
+        Ok(Some(project)) => Json(project_summary(project)).into_response(),
+        Ok(None) => (StatusCode::CONFLICT, "project name or id already exists").into_response(),
         Err(error) => {
             log::error!("project creation failed: {error}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -160,6 +159,10 @@ async fn create_user(
             "only server admins can create users and invites",
         )
             .into_response();
+    }
+
+    if let Err(error) = validated_name(&request.name) {
+        return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
     }
 
     let project = match &request.project_id {
@@ -184,7 +187,7 @@ async fn create_user(
     };
 
     match mint_invite(&state.db, &state.config.server_url, &request.name, project).await {
-        Ok(minted) => {
+        Ok(Some(minted)) => {
             log::info!(
                 "admin {} created user {} ({})",
                 inviter.id,
@@ -198,12 +201,11 @@ async fn create_user(
             })
             .into_response()
         }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            (StatusCode::CONFLICT, error.to_string()).into_response()
-        }
-        Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
-            (StatusCode::BAD_REQUEST, error.to_string()).into_response()
-        }
+        Ok(None) => (
+            StatusCode::CONFLICT,
+            format!("user {} already exists", request.name),
+        )
+            .into_response(),
         Err(error) => {
             log::error!("user creation failed: {error}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -337,7 +339,7 @@ async fn create_release(
             let dir = dir.clone();
             tokio::task::spawn_blocking(move || unpack_archive(&dir))
                 .await
-                .map_err(io::Error::other)
+                .map_err(|error| anyhow!(error))
                 .and_then(|result| result)
         }
         Err(error) => Err(error),
@@ -440,7 +442,7 @@ async fn receive_archive(
     dir: &std::path::Path,
     body: Body,
     signed_hash: Option<String>,
-) -> io::Result<()> {
+) -> Result<()> {
     use http_body_util::BodyExt;
     use tokio::io::AsyncWriteExt;
 
@@ -451,15 +453,13 @@ async fn receive_archive(
     let mut received: u64 = 0;
     let mut body = body;
     while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(io::Error::other)?;
+        let frame = frame.map_err(|error| anyhow!(error))?;
         let Ok(data) = frame.into_data() else {
             continue;
         };
         received += data.len() as u64;
         if received > MAX_ARCHIVE_BYTES {
-            return Err(io::Error::other(format!(
-                "archive exceeds the {MAX_ARCHIVE_BYTES} byte limit"
-            )));
+            bail!("archive exceeds the {MAX_ARCHIVE_BYTES} byte limit");
         }
         hasher.update(&data);
         file.write_all(&data).await?;
@@ -467,29 +467,24 @@ async fn receive_archive(
     file.flush().await?;
 
     if received == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "request body must be a gzipped tarball of the project source",
-        ));
+        bail!("request body must be a gzipped tarball of the project source");
     }
     if let Some(expected) = signed_hash
         && hex::encode(hasher.finalize()) != expected
     {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "body does not match the signed content hash",
-        ));
+        bail!("body does not match the signed content hash");
     }
     Ok(())
 }
 
 /// Keep the uploaded archive next to its unpacked tree so a bad unpack can
 /// be inspected later: <dir>/archive.tar.gz and <dir>/source/.
-fn unpack_archive(dir: &std::path::Path) -> io::Result<()> {
+fn unpack_archive(dir: &std::path::Path) -> Result<()> {
     let archive = std::fs::File::open(dir.join("archive.tar.gz"))?;
     let source = dir.join("source");
     std::fs::create_dir_all(&source)?;
-    tar::Archive::new(GzDecoder::new(io::BufReader::new(archive))).unpack(&source)
+    tar::Archive::new(GzDecoder::new(io::BufReader::new(archive))).unpack(&source)?;
+    Ok(())
 }
 
 fn release_summary(release: Release) -> ReleaseSummary {

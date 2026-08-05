@@ -1,6 +1,7 @@
+use anyhow::{Error, Result, anyhow, bail};
 use std::{
     collections::BTreeMap,
-    env, io,
+    env,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     str::FromStr,
     sync::Arc,
@@ -22,7 +23,7 @@ pub(crate) struct Config {
 }
 
 impl Config {
-    pub(crate) fn load() -> io::Result<Self> {
+    pub(crate) fn load() -> Result<Self> {
         let proxy_host: IpAddr =
             parsed_env("RAILYARD_PROXY_HOST", [0, 0, 0, 0].into(), "an IP address")?;
         let proxy_port: u16 = parsed_env("RAILYARD_PROXY_PORT", 3000, "a port number")?;
@@ -47,7 +48,7 @@ impl Config {
     }
 }
 
-fn public_ip() -> io::Result<Ipv4Addr> {
+fn public_ip() -> Result<Ipv4Addr> {
     if let Ok(value) = env::var("RAILYARD_PUBLIC_IP") {
         return value
             .parse()
@@ -66,14 +67,12 @@ fn public_ip() -> io::Result<Ipv4Addr> {
 /// The address selected by the machine's default IPv4 route. Connecting a
 /// UDP socket sends no packets; it only asks the kernel which source address
 /// it would use.
-fn outbound_ip() -> io::Result<Ipv4Addr> {
+fn outbound_ip() -> Result<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
     match socket.local_addr()?.ip() {
         IpAddr::V4(ip) => Ok(ip),
-        IpAddr::V6(_) => Err(io::Error::other(
-            "default IPv4 route returned an IPv6 address",
-        )),
+        IpAddr::V6(_) => bail!("default IPv4 route returned an IPv6 address"),
     }
 }
 
@@ -94,41 +93,39 @@ fn is_public(ip: Ipv4Addr) -> bool {
         || a >= 224)
 }
 
-fn discover_public_ip() -> io::Result<Ipv4Addr> {
+fn discover_public_ip() -> Result<Ipv4Addr> {
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|error| io::Error::other(format!("could not prepare public IP lookup: {error}")))?
+        .map_err(|error| anyhow!("could not prepare public IP lookup: {error}"))?
         .get(PUBLIC_IP_URL)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|error| {
-            io::Error::other(format!(
+            anyhow!(
                 "could not discover this machine's public IP ({error}); set RAILYARD_PUBLIC_IP explicitly"
-            ))
+            )
         })?;
     let value = response.text().map_err(|error| {
-        io::Error::other(format!(
+        anyhow!(
             "could not read the public IP response ({error}); set RAILYARD_PUBLIC_IP explicitly"
-        ))
+        )
     })?;
 
     let ip: Ipv4Addr = value.trim().parse().map_err(|_| {
-        io::Error::other(format!(
-            "public IP lookup returned {value:?}; set RAILYARD_PUBLIC_IP explicitly"
-        ))
+        anyhow!("public IP lookup returned {value:?}; set RAILYARD_PUBLIC_IP explicitly")
     })?;
     if !is_public(ip) {
-        return Err(io::Error::other(format!(
+        bail!(
             "public IP lookup returned non-public address {ip}; set RAILYARD_PUBLIC_IP explicitly"
-        )));
+        );
     }
     Ok(ip)
 }
 
 const UPSTREAM_ENV_PREFIX: &str = "RAILYARD_CONTAINER_UPSTREAM_";
 
-fn configured_service_upstreams() -> io::Result<BTreeMap<String, SocketAddr>> {
+fn configured_service_upstreams() -> Result<BTreeMap<String, SocketAddr>> {
     env::vars()
         .filter(|(key, _)| key.starts_with(UPSTREAM_ENV_PREFIX))
         .map(|(key, value)| {
@@ -141,7 +138,7 @@ fn configured_service_upstreams() -> io::Result<BTreeMap<String, SocketAddr>> {
         .collect()
 }
 
-pub(crate) fn parsed_env<T: FromStr>(name: &str, default: T, expected: &str) -> io::Result<T> {
+pub(crate) fn parsed_env<T: FromStr>(name: &str, default: T, expected: &str) -> Result<T> {
     match env::var(name) {
         Ok(value) => value
             .parse()
@@ -150,11 +147,8 @@ pub(crate) fn parsed_env<T: FromStr>(name: &str, default: T, expected: &str) -> 
     }
 }
 
-fn invalid_env(name: &str, value: &str, expected: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("{name} must be {expected}, got {value:?}"),
-    )
+fn invalid_env(name: &str, value: &str, expected: &str) -> Error {
+    anyhow!("{name} must be {expected}, got {value:?}")
 }
 
 fn env_key_to_service_name(key: &str) -> String {

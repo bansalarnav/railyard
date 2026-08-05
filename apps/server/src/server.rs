@@ -1,15 +1,15 @@
+use anyhow::{Result, anyhow};
 use pingora::proxy::http_proxy_service;
 use pingora::server::Server;
 use pingora::server::configuration::{Opt, ServerConf};
 use pingora::services::background::background_service;
-use std::io;
 use std::path::Path;
 
 use crate::api::ApiService;
 use crate::config::Config;
 use crate::proxy::{IngressProxy, RoutingTable};
 
-pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> io::Result<()> {
+pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> Result<()> {
     let config = Config::load()?;
     let proxy_addr = config.proxy_addr;
     let api_addr = config.api_addr;
@@ -39,9 +39,8 @@ pub(crate) fn run_server(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> 
     server.run_forever()
 }
 
-fn pingora_conf(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> io::Result<ServerConf> {
-    let mut conf =
-        ServerConf::new().ok_or_else(|| io::Error::other("failed to create pingora config"))?;
+fn pingora_conf(daemon: bool, pid_file: &Path, upgrade_sock: &Path) -> Result<ServerConf> {
+    let mut conf = ServerConf::new().ok_or_else(|| anyhow!("failed to create pingora config"))?;
     conf.daemon = daemon;
     conf.pid_file = pid_file.to_string_lossy().into_owned();
     conf.upgrade_sock = upgrade_sock.to_string_lossy().into_owned();

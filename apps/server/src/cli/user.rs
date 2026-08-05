@@ -1,15 +1,16 @@
+use anyhow::{Error, Result, anyhow};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{Method, StatusCode};
 use hyper_util::rt::TokioIo;
 use railyard_auth::unix_timestamp;
 use railyard_types::{CreateUserRequest, CreateUserResponse, ListUsersResponse, USERS_PATH};
-use std::{future::Future, io};
+use std::future::Future;
 use tokio::net::UnixStream;
 
 use crate::paths;
 
-pub(crate) fn add(name: &str) -> io::Result<()> {
+pub(crate) fn add(name: &str) -> Result<()> {
     block_on(async move {
         let body = serde_json::to_vec(&CreateUserRequest {
             name: name.to_string(),
@@ -19,8 +20,7 @@ pub(crate) fn add(name: &str) -> io::Result<()> {
         if !status.is_success() {
             return Err(request_failed("user creation", status, &bytes));
         }
-        let created: CreateUserResponse =
-            serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let created: CreateUserResponse = serde_json::from_slice(&bytes)?;
 
         println!("Created user {name}.");
         println!("Single-use invite, expires in 24h. Redeem with `railyard login <blob>`:");
@@ -30,13 +30,13 @@ pub(crate) fn add(name: &str) -> io::Result<()> {
     })
 }
 
-pub(crate) fn list() -> io::Result<()> {
+pub(crate) fn list() -> Result<()> {
     block_on(async {
         let (status, bytes) = admin_request(Method::GET, USERS_PATH, None).await?;
         if !status.is_success() {
             return Err(request_failed("user listing", status, &bytes));
         }
-        let listed: ListUsersResponse = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let listed: ListUsersResponse = serde_json::from_slice(&bytes)?;
 
         if listed.users.is_empty() {
             println!("No users. Create one with `railyard-server user add <name>`.");
@@ -60,7 +60,7 @@ pub(crate) fn list() -> io::Result<()> {
     })
 }
 
-pub(crate) fn remove(name: &str) -> io::Result<()> {
+pub(crate) fn remove(name: &str) -> Result<()> {
     block_on(async move {
         let path = format!("{USERS_PATH}/{name}");
         let (status, bytes) = admin_request(Method::DELETE, &path, None).await?;
@@ -86,18 +86,15 @@ async fn admin_request(
     method: Method,
     path: &str,
     body: Option<Vec<u8>>,
-) -> io::Result<(StatusCode, Bytes)> {
+) -> Result<(StatusCode, Bytes)> {
     let stream = UnixStream::connect(paths::admin_sock_path())
         .await
-        .map_err(|error| {
-            io::Error::other(format!(
-                "could not reach the railyard-server daemon ({error}); start it with `railyard-server up`"
-            ))
-        })?;
+        .map_err(|error| anyhow!(
+            "could not reach the railyard-server daemon ({error}); start it with `railyard-server up`"
+        ))?;
 
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-        .await
-        .map_err(io::Error::other)?;
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
     tokio::spawn(connection);
 
     let mut request = hyper::Request::builder()
@@ -107,30 +104,20 @@ async fn admin_request(
     if body.is_some() {
         request = request.header("content-type", "application/json");
     }
-    let request = request
-        .body(Full::new(Bytes::from(body.unwrap_or_default())))
-        .map_err(io::Error::other)?;
+    let request = request.body(Full::new(Bytes::from(body.unwrap_or_default())))?;
 
-    let response = sender
-        .send_request(request)
-        .await
-        .map_err(io::Error::other)?;
+    let response = sender.send_request(request).await?;
     let status = response.status();
-    let bytes = response
-        .into_body()
-        .collect()
-        .await
-        .map_err(io::Error::other)?
-        .to_bytes();
+    let bytes = response.into_body().collect().await?.to_bytes();
 
     Ok((status, bytes))
 }
 
-fn request_failed(action: &str, status: StatusCode, body: &[u8]) -> io::Error {
-    io::Error::other(format!(
+fn request_failed(action: &str, status: StatusCode, body: &[u8]) -> Error {
+    anyhow!(
         "{action} failed ({status}): {}",
         String::from_utf8_lossy(body)
-    ))
+    )
 }
 
 fn format_age(seconds: u64) -> String {

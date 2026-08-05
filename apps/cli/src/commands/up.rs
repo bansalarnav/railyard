@@ -1,7 +1,7 @@
+use anyhow::{Result, anyhow};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use ignore::WalkBuilder;
-use std::error::Error;
 use std::io::{self, Write};
 use std::path::Path;
 use std::{env, fs};
@@ -28,20 +28,19 @@ pub(crate) struct Args {
     message: Option<String>,
 }
 
-pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<()> {
     let cwd = env::current_dir()?;
     let Some((manifest_path, raw)) = find_manifest(&cwd)? else {
-        return Err(format!(
+        return Err(anyhow!(
             "no {MANIFEST_FILE} found here or in any ancestor; run `railyard init` first"
-        )
-        .into());
+        ));
     };
     let root = manifest_path
         .parent()
-        .ok_or("manifest has no parent directory")?
+        .ok_or_else(|| anyhow!("manifest has no parent directory"))?
         .to_path_buf();
     let manifest = parse_manifest(&manifest_path, &raw)
-        .map_err(|error| format!("{} is invalid:\n{error}", manifest_path.display()))?;
+        .map_err(|error| anyhow!("{} is invalid:\n{error}", manifest_path.display()))?;
 
     // `up` never invents projects: a manifest without an id points at `init`
     // instead of silently creating something on whatever server resolves.
@@ -52,14 +51,13 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
             manifest_path: (root != cwd).then(|| manifest_path.clone()),
         })
     }) else {
-        return Err(format!(
+        return Err(anyhow!(
             "{} has no project.id; run `railyard init` to create the project on a server",
             manifest_path.display()
-        )
-        .into());
+        ));
     };
     if !confirm_ancestor(&project, ctx)? {
-        return Err("up cancelled".into());
+        return Err(anyhow!("up cancelled"));
     }
 
     let (server_name, server) = match args.server {
@@ -72,19 +70,19 @@ pub(crate) async fn run(args: Args, ctx: ExecContext) -> Result<(), Box<dyn Erro
     match server_project_presence(&server, &project).await {
         ProjectPresence::Present => {}
         ProjectPresence::Absent => {
-            return Err(format!(
+            return Err(anyhow!(
                 "server {server_name} ({}) does not have project {} ({}); check --server or \
                  run `railyard init`",
-                server.server_url, project.name, project.id
-            )
-            .into());
+                server.server_url,
+                project.name,
+                project.id
+            ));
         }
         ProjectPresence::Unknown(reason) => {
-            return Err(format!(
+            return Err(anyhow!(
                 "could not confirm project {} on {server_name}: {reason}",
                 project.name
-            )
-            .into());
+            ));
         }
     }
 
@@ -130,7 +128,7 @@ fn latest_commit_subject(root: &Path) -> Option<String> {
 /// Gzipped tarball of the repository at `root`, honoring `.gitignore` and
 /// `.railyardignore` and always skipping `.git` and `node_modules`. Paths in
 /// the archive are relative to `root`. Returns the number of files packed.
-fn pack_repository(root: &Path, output: &Path) -> Result<u64, Box<dyn Error>> {
+fn pack_repository(root: &Path, output: &Path) -> Result<u64> {
     let encoder = GzEncoder::new(
         io::BufWriter::new(fs::File::create(output)?),
         Compression::default(),

@@ -1,7 +1,7 @@
+use anyhow::{Result, anyhow};
 use railyard_auth::{INVITE_BLOB_PREFIX, InvitePayload, unix_timestamp};
 use railyard_types::WhoamiResponse;
 use std::env;
-use std::error::Error;
 use std::process::Command;
 
 use crate::auth::{generate_signing_key, public_key_base64};
@@ -23,7 +23,7 @@ pub(crate) struct Args {
     user: Option<String>,
 }
 
-pub(crate) async fn run(args: Args) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args) -> Result<()> {
     if args.target.starts_with(INVITE_BLOB_PREFIX) {
         login(&args.target, args.name).await
     } else {
@@ -38,7 +38,7 @@ async fn login_ssh(
     target: &str,
     server_name: Option<String>,
     user_flag: Option<String>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let user_name = match user_flag {
         Some(name) => name,
         None => {
@@ -47,7 +47,9 @@ async fn login_ssh(
                 .unwrap_or_default();
             let name = sanitize_user_name(&local);
             if name.is_empty() {
-                return Err("could not derive a user name from $USER; pass --user <name>".into());
+                return Err(anyhow!(
+                    "could not derive a user name from $USER; pass --user <name>"
+                ));
             }
             name
         }
@@ -60,11 +62,10 @@ async fn login_ssh(
         .output()?;
 
     if !output.status.success() {
-        return Err(format!(
+        return Err(anyhow!(
             "`ssh {target} railyard-server user add {user_name}` failed:\n{}",
             String::from_utf8_lossy(&output.stderr).trim()
-        )
-        .into());
+        ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -72,7 +73,7 @@ async fn login_ssh(
         .lines()
         .map(str::trim)
         .find(|line| line.starts_with(INVITE_BLOB_PREFIX))
-        .ok_or("the remote `user add` printed no invite blob")?;
+        .ok_or_else(|| anyhow!("the remote `user add` printed no invite blob"))?;
 
     login(blob, server_name).await
 }
@@ -85,19 +86,20 @@ fn sanitize_user_name(raw: &str) -> String {
         .collect()
 }
 
-async fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Error>> {
+async fn login(blob: &str, server_name: Option<String>) -> Result<()> {
     let invite = InvitePayload::parse(blob)?;
     if invite.expires_at <= unix_timestamp() {
-        return Err("this invite has expired; ask for a new one".into());
+        return Err(anyhow!("this invite has expired; ask for a new one"));
     }
 
     if let Some((entry_name, identity)) = existing_different_user_with_same_scope(&invite).await? {
-        return Err(format!(
+        return Err(anyhow!(
             "already logged in to {} as user {} with the same permissions (server \
              {entry_name}); this invite is for user {}. Log out of {entry_name} first",
-            invite.server_url, identity.name, invite.user_name
-        )
-        .into());
+            invite.server_url,
+            identity.name,
+            invite.user_name
+        ));
     }
 
     // A project invite for a server where an existing identity already
@@ -125,11 +127,10 @@ async fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Er
     if let Ok(existing) = read_server(&server_name)
         && existing.server_url != invite.server_url
     {
-        return Err(format!(
+        return Err(anyhow!(
             "server {server_name} already points at {}; pass --name <name> to pick another name",
             existing.server_url
-        )
-        .into());
+        ));
     }
 
     let signing_key = generate_signing_key();
@@ -175,7 +176,7 @@ async fn login(blob: &str, server_name: Option<String>) -> Result<(), Box<dyn Er
 /// A live local identity for another user with exactly this invite's scope.
 async fn existing_different_user_with_same_scope(
     invite: &InvitePayload,
-) -> Result<Option<(String, WhoamiResponse)>, Box<dyn Error>> {
+) -> Result<Option<(String, WhoamiResponse)>> {
     let invited_project = invite.project.as_ref().map(|project| project.id.as_str());
 
     for (name, server) in list_servers()? {
@@ -195,10 +196,7 @@ async fn existing_different_user_with_same_scope(
 /// Remove project-scoped entries for `server_url` that the new admin entry
 /// makes redundant, repointing their project bindings at it. Entries whose
 /// scope can't be confirmed (unreachable, rejected key) are left alone.
-async fn supersede_project_entries(
-    server_url: &str,
-    admin_entry: &str,
-) -> Result<(), Box<dyn Error>> {
+async fn supersede_project_entries(server_url: &str, admin_entry: &str) -> Result<()> {
     for (name, server) in list_servers()? {
         if name == admin_entry || server.server_url != server_url {
             continue;
@@ -228,7 +226,7 @@ async fn supersede_project_entries(
 async fn existing_access(
     server_url: &str,
     project_id: &str,
-) -> Result<Option<(String, WhoamiResponse)>, Box<dyn Error>> {
+) -> Result<Option<(String, WhoamiResponse)>> {
     for (name, server) in list_servers()? {
         if server.server_url != server_url {
             continue;
@@ -246,14 +244,11 @@ async fn existing_access(
 /// for project-scoped invites (so a project identity does not collide with
 /// an admin entry for the same server), then the server's human name, then
 /// the host of `server_url`.
-fn resolve_server_name(
-    explicit: Option<String>,
-    invite: &InvitePayload,
-) -> Result<String, Box<dyn Error>> {
+fn resolve_server_name(explicit: Option<String>, invite: &InvitePayload) -> Result<String> {
     if let Some(raw) = explicit {
         let name = sanitize_server_name(&raw);
         if name.is_empty() {
-            return Err("server name has no usable characters".into());
+            return Err(anyhow!("server name has no usable characters"));
         }
         return Ok(name);
     }
@@ -279,5 +274,7 @@ fn resolve_server_name(
         }
     }
 
-    Err("could not derive a server name from this invite; pass --name <name>".into())
+    Err(anyhow!(
+        "could not derive a server name from this invite; pass --name <name>"
+    ))
 }

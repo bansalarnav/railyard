@@ -1,5 +1,5 @@
+use anyhow::{Result, anyhow};
 use dialoguer::{Select, theme::ColorfulTheme};
-use std::error::Error;
 
 use crate::config::list_servers;
 use crate::context::ExecContext;
@@ -13,11 +13,13 @@ use crate::resolve::{
 /// list is not narrowed to servers that have the project — the choice is
 /// checked after, so picking a server without it points at `init` instead of
 /// silently recording a bad binding.
-pub(crate) async fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
-    let project = confirmed_linked_project(ctx)?.ok_or(format!(
-        "no project in this directory ({MANIFEST_FILE} with a project.id); run `railyard init` \
+pub(crate) async fn run(ctx: ExecContext) -> Result<()> {
+    let project = confirmed_linked_project(ctx)?.ok_or_else(|| {
+        anyhow!(
+            "no project in this directory ({MANIFEST_FILE} with a project.id); run `railyard init` \
          to create one"
-    ))?;
+        )
+    })?;
 
     match project_binding(&project.id)? {
         ProjectBinding::Bound(name, _) => {
@@ -36,14 +38,16 @@ pub(crate) async fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
 
     let mut servers = list_servers()?;
     if servers.is_empty() {
-        return Err("no servers found; run `railyard login <blob>` first".into());
+        return Err(anyhow!(
+            "no servers found; run `railyard login <blob>` first"
+        ));
     }
     if !ctx.interactive {
-        return Err(format!(
+        return Err(anyhow!(
             "`railyard link` picks a server interactively; rerun on a TTY (project {}, {})",
-            project.name, project.id
-        )
-        .into());
+            project.name,
+            project.id
+        ));
     }
 
     let items: Vec<String> = servers
@@ -62,16 +66,15 @@ pub(crate) async fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
             link_project(&project, name, server)?;
             Ok(())
         }
-        ProjectPresence::Absent => Err(format!(
+        ProjectPresence::Absent => Err(anyhow!(
             "{name} does not have project {} ({}); run `railyard init --server {name}` to \
              create it there",
-            project.name, project.id
-        )
-        .into()),
-        ProjectPresence::Unknown(reason) => Err(format!(
+            project.name,
+            project.id
+        )),
+        ProjectPresence::Unknown(reason) => Err(anyhow!(
             "could not check {name} for project {} ({reason}); restore access there and retry",
             project.name
-        )
-        .into()),
+        )),
     }
 }

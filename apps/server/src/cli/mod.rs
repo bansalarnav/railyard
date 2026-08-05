@@ -1,8 +1,8 @@
 mod daemon;
 mod user;
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::io;
 
 #[derive(Parser)]
 #[command(name = "railyard-server")]
@@ -34,7 +34,7 @@ enum UserCommand {
     Remove { name: String },
 }
 
-pub(crate) fn run() -> io::Result<()> {
+pub(crate) fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Up { foreground } => daemon::up(foreground),
         Command::Down => daemon::down(),

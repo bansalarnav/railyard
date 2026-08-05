@@ -5,8 +5,8 @@ mod context;
 mod http;
 mod resolve;
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::error::Error;
 
 use context::ExecContext;
 
@@ -39,7 +39,7 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<()> {
     let ctx = ExecContext::detect();
     match Cli::parse().command {
         Commands::Login(args) => commands::login::run(args).await,

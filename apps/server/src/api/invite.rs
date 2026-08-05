@@ -1,7 +1,8 @@
+use anyhow::{Result, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use railyard_auth::{InvitePayload, InviteProject, unix_timestamp};
-use std::{env, io};
+use std::env;
 
 use super::db::{Db, token_hash};
 
@@ -21,16 +22,19 @@ pub(crate) async fn mint_invite(
     server_url: &str,
     name: &str,
     project: Option<InviteProject>,
-) -> io::Result<MintedInvite> {
+) -> Result<Option<MintedInvite>> {
     let name = validated_name(name)?;
     let server_name = server_name()?;
 
     let token = random_token();
     let now = unix_timestamp();
     let expires_at = now + INVITE_TTL_SECONDS;
-    let user_id = db
+    let Some(user_id) = db
         .create_user(&name, project.as_ref().map(|p| p.id.as_str()), now)
-        .await?;
+        .await?
+    else {
+        return Ok(None);
+    };
     db.create_invite(&user_id, &token_hash(&token), now, expires_at)
         .await?;
 
@@ -45,17 +49,17 @@ pub(crate) async fn mint_invite(
     }
     .encode();
 
-    Ok(MintedInvite {
+    Ok(Some(MintedInvite {
         user_id,
         blob,
         expires_at,
-    })
+    }))
 }
 
 /// The server's human name, embedded in invites so clients can derive a
 /// profile name independently of its generated URL. `RAILYARD_SERVER_NAME`
 /// overrides; the default is the OS hostname's first label.
-fn server_name() -> io::Result<String> {
+fn server_name() -> Result<String> {
     let name = match env::var("RAILYARD_SERVER_NAME") {
         Ok(name) => name,
         Err(_) => {
@@ -68,15 +72,12 @@ fn server_name() -> io::Result<String> {
 
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "could not determine a server name from the hostname; set RAILYARD_SERVER_NAME",
-        ));
+        bail!("could not determine a server name from the hostname; set RAILYARD_SERVER_NAME");
     }
     Ok(name)
 }
 
-fn validated_name(name: &str) -> io::Result<String> {
+pub(crate) fn validated_name(name: &str) -> Result<String> {
     let valid = !name.is_empty()
         && name
             .chars()
@@ -85,10 +86,7 @@ fn validated_name(name: &str) -> io::Result<String> {
     if valid {
         Ok(name.to_string())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("user name {name:?} must be lowercase letters, digits, - or _"),
-        ))
+        bail!("user name {name:?} must be lowercase letters, digits, - or _")
     }
 }
 

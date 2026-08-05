@@ -1,7 +1,8 @@
+use anyhow::Result;
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -10,7 +11,7 @@ use std::{
 use crate::paths::runtime_dir;
 use crate::server::run_server;
 
-pub(crate) fn up(foreground: bool) -> io::Result<()> {
+pub(crate) fn up(foreground: bool) -> Result<()> {
     if let Some(pid) = read_running_pid() {
         println!("Railyard server is already running with pid {pid}");
         return Ok(());
@@ -20,11 +21,11 @@ pub(crate) fn up(foreground: bool) -> io::Result<()> {
     run_server(!foreground, &pid_file_path(), &upgrade_sock_path())
 }
 
-pub(crate) fn down() -> io::Result<()> {
+pub(crate) fn down() -> Result<()> {
     stop_running_server()
 }
 
-pub(crate) fn restart() -> io::Result<()> {
+pub(crate) fn restart() -> Result<()> {
     stop_running_server()?;
     up(false)
 }
@@ -36,7 +37,7 @@ pub(crate) fn status() {
     }
 }
 
-fn stop_running_server() -> io::Result<()> {
+fn stop_running_server() -> Result<()> {
     let pid_path = pid_file_path();
     let Some(pid) = read_pid_file(&pid_path) else {
         println!("Railyard server is not running");
@@ -49,8 +50,7 @@ fn stop_running_server() -> io::Result<()> {
         return Ok(());
     }
 
-    kill(Pid::from_raw(pid), Signal::SIGTERM)
-        .map_err(|errno| io::Error::from_raw_os_error(errno as i32))?;
+    kill(Pid::from_raw(pid), Signal::SIGTERM)?;
 
     for _ in 0..50 {
         if !process_exists(pid) {
@@ -76,8 +76,9 @@ fn read_running_pid() -> Option<i32> {
     }
 }
 
-fn ensure_runtime_dir() -> io::Result<()> {
-    fs::create_dir_all(runtime_dir())
+fn ensure_runtime_dir() -> Result<()> {
+    fs::create_dir_all(runtime_dir())?;
+    Ok(())
 }
 
 fn pid_file_path() -> PathBuf {

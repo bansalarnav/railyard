@@ -1,4 +1,4 @@
-use std::error::Error;
+use anyhow::{Result, anyhow};
 
 use crate::config::remove_project_binding;
 use crate::context::ExecContext;
@@ -7,10 +7,10 @@ use crate::resolve::{MANIFEST_FILE, confirmed_linked_project};
 /// Drop the recorded project→server binding. The manifest keeps its
 /// `project.id`, so `init` (or any project command) can link it again — to
 /// the same server or another one.
-pub(crate) fn run(ctx: ExecContext) -> Result<(), Box<dyn Error>> {
-    let project = confirmed_linked_project(ctx)?.ok_or(format!(
-        "no project linked in this directory ({MANIFEST_FILE} with a project.id)"
-    ))?;
+pub(crate) fn run(ctx: ExecContext) -> Result<()> {
+    let project = confirmed_linked_project(ctx)?.ok_or_else(|| {
+        anyhow!("no project linked in this directory ({MANIFEST_FILE} with a project.id)")
+    })?;
 
     match remove_project_binding(&project.id)? {
         Some(server_name) => println!(

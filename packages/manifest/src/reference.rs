@@ -1,4 +1,4 @@
-use std::fmt;
+use anyhow::{Result, anyhow, bail};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reference {
     ServiceHost(String),
@@ -20,28 +20,17 @@ impl Reference {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidReference {
-    pub token: String,
-    pub reason: String,
-}
-
-impl fmt::Display for InvalidReference {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid reference `{}`: {}", self.token, self.reason)
-    }
-}
-pub fn parse_references(value: &str) -> Result<Vec<Reference>, InvalidReference> {
+pub fn parse_references(value: &str) -> Result<Vec<Reference>> {
     let mut references = Vec::new();
     let mut rest = value;
 
     while let Some(start) = rest.find("${{") {
         let after_open = &rest[start + 3..];
         let Some(end) = after_open.find("}}") else {
-            return Err(InvalidReference {
-                token: rest[start..].to_string(),
-                reason: "unterminated `${{` (missing `}}`)".to_string(),
-            });
+            bail!(
+                "invalid reference `{}`: unterminated `${{` (missing `}}`)",
+                &rest[start..]
+            );
         };
         let token = after_open[..end].trim();
         references.push(parse_token(token)?);
@@ -51,11 +40,8 @@ pub fn parse_references(value: &str) -> Result<Vec<Reference>, InvalidReference>
     Ok(references)
 }
 
-fn parse_token(token: &str) -> Result<Reference, InvalidReference> {
-    let invalid = |reason: &str| InvalidReference {
-        token: token.to_string(),
-        reason: reason.to_string(),
-    };
+fn parse_token(token: &str) -> Result<Reference> {
+    let invalid = |reason: &str| anyhow!("invalid reference `{token}`: {reason}");
 
     if let Some(key) = token.strip_prefix("secrets.") {
         if key.is_empty() {

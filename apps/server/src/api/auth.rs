@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow, bail};
 use axum::Json;
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -79,19 +80,19 @@ pub(crate) async fn verify_signature(
 /// here, so large uploads can stream. The signature covers the claimed
 /// content hash; checking the body against that claim is deferred to
 /// `verify_body_hash` or the streaming handler.
-async fn checked_request(state: &ApiState, request: Request) -> Result<Request, String> {
+async fn checked_request(state: &ApiState, request: Request) -> Result<Request> {
     let (mut parts, body) = request.into_parts();
 
-    let header = |name: &str| -> Result<&str, String> {
+    let header = |name: &str| -> Result<&str> {
         parts
             .headers
             .get(name)
             .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| format!("missing or malformed {name} header"))
+            .ok_or_else(|| anyhow!("missing or malformed {name} header"))
     };
 
     if header(HEADER_SIGNATURE_VERSION)? != SIGNATURE_VERSION {
-        return Err("unsupported signature version".to_string());
+        bail!("unsupported signature version");
     }
 
     let key_id = header(HEADER_KEY_ID)?;
@@ -100,11 +101,11 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
     let signature = header(HEADER_SIGNATURE)?;
     let timestamp: u64 = header(HEADER_TIMESTAMP)?
         .parse()
-        .map_err(|_| "timestamp is not unix seconds".to_string())?;
+        .map_err(|_| anyhow!("timestamp is not unix seconds"))?;
 
     let now = unix_timestamp();
     if now.abs_diff(timestamp) > TIMESTAMP_WINDOW_SECONDS {
-        return Err("timestamp outside the allowed window".to_string());
+        bail!("timestamp outside the allowed window");
     }
 
     let (public_key, user) = state
@@ -113,17 +114,17 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         .await
         .map_err(|error| {
             log::error!("key lookup failed: {error}");
-            "key lookup failed".to_string()
+            anyhow!("key lookup failed")
         })?
-        .ok_or_else(|| "unknown or revoked key".to_string())?;
+        .ok_or_else(|| anyhow!("unknown or revoked key"))?;
     let public_key =
-        parse_public_key(&public_key).ok_or_else(|| "stored public key is corrupt".to_string())?;
+        parse_public_key(&public_key).ok_or_else(|| anyhow!("stored public key is corrupt"))?;
 
     let signature: [u8; 64] = BASE64_STANDARD
         .decode(signature)
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(|| "signature is not base64 ed25519".to_string())?;
+        .ok_or_else(|| anyhow!("signature is not base64 ed25519"))?;
 
     // The client signs the request path and query exactly as they arrive here.
     let uri = &parts.uri;
@@ -132,7 +133,7 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         None => uri
             .authority()
             .map(|authority| authority.to_string())
-            .ok_or_else(|| "request has no host".to_string())?,
+            .ok_or_else(|| anyhow!("request has no host"))?,
     };
     let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
 
@@ -148,7 +149,7 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
 
     public_key
         .verify(canonical.as_bytes(), &Signature::from_bytes(&signature))
-        .map_err(|_| "signature verification failed".to_string())?;
+        .map_err(|_| anyhow!("signature verification failed"))?;
 
     // Record the nonce only after the signature checks out, so strangers
     // can't fill the replay map with garbage.
@@ -156,7 +157,7 @@ async fn checked_request(state: &ApiState, request: Request) -> Result<Request, 
         let mut seen = state.seen_nonces.lock().expect("nonce lock poisoned");
         seen.retain(|_, seen_at| now.abs_diff(*seen_at) <= TIMESTAMP_WINDOW_SECONDS);
         if seen.insert(nonce.to_string(), now).is_some() {
-            return Err("nonce already used".to_string());
+            bail!("nonce already used");
         }
     }
 

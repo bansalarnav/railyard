@@ -1,5 +1,5 @@
+use anyhow::Result;
 use libsql::{Value, params};
-use std::io;
 
 use super::{Db, db_error, integer_column, optional_text_column, text_column};
 
@@ -27,12 +27,9 @@ impl Db {
         name: &str,
         project_id: Option<&str>,
         now: u64,
-    ) -> io::Result<String> {
+    ) -> Result<Option<String>> {
         if self.user_id_by_name(name).await?.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("user {name} already exists"),
-            ));
+            return Ok(None);
         }
 
         let project_id = match project_id {
@@ -48,10 +45,10 @@ impl Db {
             .await
             .map_err(db_error)?;
 
-        Ok(user_id)
+        Ok(Some(user_id))
     }
 
-    pub(crate) async fn list_users(&self) -> io::Result<Vec<User>> {
+    pub(crate) async fn list_users(&self) -> Result<Vec<User>> {
         let mut rows = self
             .conn
             .query(
@@ -74,7 +71,7 @@ impl Db {
 
         Ok(users)
     }
-    pub(crate) async fn remove_user(&self, name: &str) -> io::Result<bool> {
+    pub(crate) async fn remove_user(&self, name: &str) -> Result<bool> {
         let Some(user_id) = self.user_id_by_name(name).await? else {
             return Ok(false);
         };
@@ -95,7 +92,7 @@ impl Db {
     }
     /// Resolve a request's key to the public key that must verify it and the
     /// user it belongs to. A key id is a user id today (one key per user).
-    pub(crate) async fn key_owner(&self, key_id: &str) -> io::Result<Option<(String, AuthUser)>> {
+    pub(crate) async fn key_owner(&self, key_id: &str) -> Result<Option<(String, AuthUser)>> {
         let mut rows = self
             .conn
             .query(
@@ -119,7 +116,7 @@ impl Db {
         }
     }
 
-    async fn user_id_by_name(&self, name: &str) -> io::Result<Option<String>> {
+    async fn user_id_by_name(&self, name: &str) -> Result<Option<String>> {
         let mut rows = self
             .conn
             .query("SELECT id FROM users WHERE name = ?1", params![name])

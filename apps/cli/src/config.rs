@@ -1,3 +1,4 @@
+use anyhow::{Error, Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use ed25519_dalek::SigningKey;
@@ -23,7 +24,7 @@ struct StoredPrivateKey {
     secret_key_base64: String,
 }
 
-pub(crate) fn write_server(server_name: &str, server: &ServerConfig) -> io::Result<PathBuf> {
+pub(crate) fn write_server(server_name: &str, server: &ServerConfig) -> Result<PathBuf> {
     let path = server_path(server_name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -34,25 +35,26 @@ pub(crate) fn write_server(server_name: &str, server: &ServerConfig) -> io::Resu
     Ok(path)
 }
 
-pub(crate) fn read_server(server_name: &str) -> io::Result<ServerConfig> {
+pub(crate) fn read_server(server_name: &str) -> Result<ServerConfig> {
     let raw = fs::read_to_string(server_path(server_name)?)?;
     serde_json::from_str(&raw).map_err(invalid_data)
 }
 
 /// Delete a server entry and its private key file.
-pub(crate) fn remove_server(server_name: &str) -> io::Result<()> {
+pub(crate) fn remove_server(server_name: &str) -> Result<()> {
     if let Ok(server) = read_server(server_name) {
         let _ = fs::remove_file(&server.private_key_path);
     }
-    fs::remove_file(server_path(server_name)?)
+    fs::remove_file(server_path(server_name)?)?;
+    Ok(())
 }
 
-pub(crate) fn list_servers() -> io::Result<Vec<(String, ServerConfig)>> {
+pub(crate) fn list_servers() -> Result<Vec<(String, ServerConfig)>> {
     let dir = config_root()?.join("client").join("servers");
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
 
     let mut servers = Vec::new();
@@ -84,11 +86,11 @@ struct GlobalConfig {
     projects: BTreeMap<String, String>,
 }
 
-pub(crate) fn read_project_binding(project_id: &str) -> io::Result<Option<String>> {
+pub(crate) fn read_project_binding(project_id: &str) -> Result<Option<String>> {
     Ok(read_global_config()?.projects.get(project_id).cloned())
 }
 
-pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> io::Result<()> {
+pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> Result<()> {
     let mut config = read_global_config()?;
     config
         .projects
@@ -98,7 +100,7 @@ pub(crate) fn record_project_binding(project_id: &str, server_name: &str) -> io:
 
 /// Forget which server a project deploys through; returns the server name
 /// the binding pointed at, if there was one.
-pub(crate) fn remove_project_binding(project_id: &str) -> io::Result<Option<String>> {
+pub(crate) fn remove_project_binding(project_id: &str) -> Result<Option<String>> {
     let mut config = read_global_config()?;
     let removed = config.projects.remove(project_id);
     if removed.is_some() {
@@ -108,7 +110,7 @@ pub(crate) fn remove_project_binding(project_id: &str) -> io::Result<Option<Stri
 }
 
 /// Point every project bound to server `from` at `to`; returns how many moved.
-pub(crate) fn rebind_projects(from: &str, to: &str) -> io::Result<usize> {
+pub(crate) fn rebind_projects(from: &str, to: &str) -> Result<usize> {
     let mut config = read_global_config()?;
     let mut moved = 0;
     for server in config.projects.values_mut() {
@@ -123,7 +125,7 @@ pub(crate) fn rebind_projects(from: &str, to: &str) -> io::Result<usize> {
     Ok(moved)
 }
 
-fn write_global_config(config: &GlobalConfig) -> io::Result<()> {
+fn write_global_config(config: &GlobalConfig) -> Result<()> {
     let path = global_config_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -131,22 +133,23 @@ fn write_global_config(config: &GlobalConfig) -> io::Result<()> {
     fs::write(
         &path,
         serde_json::to_string_pretty(config).map_err(invalid_data)?,
-    )
+    )?;
+    Ok(())
 }
 
-fn read_global_config() -> io::Result<GlobalConfig> {
+fn read_global_config() -> Result<GlobalConfig> {
     match fs::read_to_string(global_config_path()?) {
         Ok(raw) => serde_json::from_str(&raw).map_err(invalid_data),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(GlobalConfig::default()),
-        Err(error) => Err(error),
+        Err(error) => Err(error.into()),
     }
 }
 
-fn global_config_path() -> io::Result<PathBuf> {
+fn global_config_path() -> Result<PathBuf> {
     Ok(config_root()?.join("client").join("config.json"))
 }
 
-pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::Result<PathBuf> {
+pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> Result<PathBuf> {
     let path = key_path(key_id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -163,7 +166,7 @@ pub(crate) fn write_signing_key(key_id: &str, signing_key: &SigningKey) -> io::R
     Ok(path)
 }
 
-pub(crate) fn read_signing_key(path: &str) -> io::Result<SigningKey> {
+pub(crate) fn read_signing_key(path: &str) -> Result<SigningKey> {
     let raw = fs::read_to_string(path)?;
     let stored: StoredPrivateKey = serde_json::from_str(&raw).map_err(invalid_data)?;
     let secret_key = BASE64_STANDARD
@@ -192,21 +195,21 @@ pub(crate) fn sanitize_server_name(raw: &str) -> String {
     sanitized.trim_matches('-').to_string()
 }
 
-fn server_path(server_name: &str) -> io::Result<PathBuf> {
+fn server_path(server_name: &str) -> Result<PathBuf> {
     Ok(config_root()?
         .join("client")
         .join("servers")
         .join(format!("{server_name}.json")))
 }
 
-fn key_path(key_id: &str) -> io::Result<PathBuf> {
+fn key_path(key_id: &str) -> Result<PathBuf> {
     Ok(config_root()?
         .join("client")
         .join("keys")
         .join(format!("{key_id}.json")))
 }
 
-fn config_root() -> io::Result<PathBuf> {
+fn config_root() -> Result<PathBuf> {
     if env::var_os("RAILYARD_DEV").is_some() {
         return Ok(PathBuf::from(".dev-state"));
     }
@@ -222,24 +225,24 @@ fn config_root() -> io::Result<PathBuf> {
         return Ok(PathBuf::from(appdata).join("railyard"));
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "could not locate a config directory: set XDG_CONFIG_HOME, HOME, or APPDATA",
+    Err(anyhow!(
+        "could not locate a config directory: set XDG_CONFIG_HOME, HOME, or APPDATA"
     ))
 }
 
-fn invalid_data(error: impl std::fmt::Display) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+fn invalid_data(error: impl std::fmt::Display) -> Error {
+    anyhow!("{error}")
 }
 
 #[cfg(unix)]
-fn set_private_permissions(path: &Path) -> io::Result<()> {
+fn set_private_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn set_private_permissions(_path: &Path) -> io::Result<()> {
+fn set_private_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }

@@ -1,5 +1,5 @@
+use anyhow::{Result, anyhow};
 use railyard_types::WhoamiResponse;
-use std::error::Error;
 
 use crate::config::list_servers;
 use crate::http;
@@ -17,17 +17,19 @@ pub(crate) struct Args {
 /// server believes (a revoked key shows up here, not in local config). The
 /// starred row is what commands in the current directory would use, computed
 /// with the same resolution rules those commands apply.
-pub(crate) async fn run(args: Args) -> Result<(), Box<dyn Error>> {
+pub(crate) async fn run(args: Args) -> Result<()> {
     let server_flag = args.server;
     let mut servers = list_servers()?;
     if servers.is_empty() {
-        return Err("no servers found; run `railyard login <blob>` first".into());
+        return Err(anyhow!(
+            "no servers found; run `railyard login <blob>` first"
+        ));
     }
 
     let (selected, note) = if let Some(name) = &server_flag {
         servers.retain(|(entry, _)| entry == name);
         if servers.is_empty() {
-            return Err(format!("no server named {name}").into());
+            return Err(anyhow!("no server named {name}"));
         }
         (Some(name.clone()), format!("selected by --server {name}"))
     } else if let Some(project) = linked_project()? {

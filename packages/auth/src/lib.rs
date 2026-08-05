@@ -5,8 +5,8 @@
 mod invite;
 
 pub use invite::{
-    INVITE_BLOB_PREFIX, InviteParseError, InvitePayload, InviteProject, REDEEM_INVITE_PATH,
-    RedeemInviteRequest, RedeemInviteResponse,
+    INVITE_BLOB_PREFIX, InvitePayload, InviteProject, REDEEM_INVITE_PATH, RedeemInviteRequest,
+    RedeemInviteResponse,
 };
 
 use std::time::{SystemTime, UNIX_EPOCH};

@@ -1,7 +1,7 @@
+use anyhow::{Result, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 pub const INVITE_BLOB_PREFIX: &str = "ryd-invite-v1.";
 
@@ -36,15 +36,15 @@ impl InvitePayload {
         format!("{INVITE_BLOB_PREFIX}{}", URL_SAFE_NO_PAD.encode(json))
     }
 
-    pub fn parse(blob: &str) -> Result<Self, InviteParseError> {
-        let encoded = blob
-            .trim()
-            .strip_prefix(INVITE_BLOB_PREFIX)
-            .ok_or(InviteParseError)?;
+    pub fn parse(blob: &str) -> Result<Self> {
+        let Some(encoded) = blob.trim().strip_prefix(INVITE_BLOB_PREFIX) else {
+            bail!("not a valid {INVITE_BLOB_PREFIX}* invite blob");
+        };
         let json = URL_SAFE_NO_PAD
             .decode(encoded.as_bytes())
-            .map_err(|_| InviteParseError)?;
-        serde_json::from_slice(&json).map_err(|_| InviteParseError)
+            .map_err(|_| anyhow::anyhow!("not a valid {INVITE_BLOB_PREFIX}* invite blob"))?;
+        serde_json::from_slice(&json)
+            .map_err(|_| anyhow::anyhow!("not a valid {INVITE_BLOB_PREFIX}* invite blob"))
     }
 }
 
@@ -58,17 +58,6 @@ pub struct RedeemInviteRequest {
 pub struct RedeemInviteResponse {
     pub key_id: String,
 }
-
-#[derive(Debug)]
-pub struct InviteParseError;
-
-impl fmt::Display for InviteParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "not a valid {INVITE_BLOB_PREFIX}* invite blob")
-    }
-}
-
-impl std::error::Error for InviteParseError {}
 
 #[cfg(test)]
 mod tests {

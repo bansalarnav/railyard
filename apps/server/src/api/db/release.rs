@@ -1,6 +1,6 @@
+use anyhow::{Result, anyhow};
 use libsql::params;
 use railyard_types::ReleaseStatus;
-use std::io;
 
 use super::{Db, db_error, integer_column, optional_text_column, text_column};
 
@@ -21,7 +21,7 @@ impl Db {
         status: ReleaseStatus,
         message: Option<&str>,
         now: u64,
-    ) -> io::Result<Release> {
+    ) -> Result<Release> {
         let id = new_release_id();
         self.conn
             .execute(
@@ -55,7 +55,7 @@ impl Db {
         status: ReleaseStatus,
         error: Option<&str>,
         now: u64,
-    ) -> io::Result<()> {
+    ) -> Result<()> {
         self.conn
             .execute(
                 "UPDATE releases SET status = ?2, error = ?3, updated_at = ?4 WHERE id = ?1",
@@ -66,7 +66,7 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) async fn list_releases(&self, project_id: &str) -> io::Result<Vec<Release>> {
+    pub(crate) async fn list_releases(&self, project_id: &str) -> Result<Vec<Release>> {
         let mut rows = self
             .conn
             .query(
@@ -95,10 +95,9 @@ impl Db {
     }
 }
 
-fn status_column(row: &libsql::Row, index: i32) -> io::Result<ReleaseStatus> {
+fn status_column(row: &libsql::Row, index: i32) -> Result<ReleaseStatus> {
     let text = text_column(row, index)?;
-    ReleaseStatus::parse(&text)
-        .ok_or_else(|| io::Error::other(format!("unknown release status {text:?}")))
+    ReleaseStatus::parse(&text).ok_or_else(|| anyhow!("unknown release status {text:?}"))
 }
 
 fn new_release_id() -> String {

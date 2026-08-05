@@ -2,9 +2,9 @@
 //! recorded project→server bindings, and the shared `--server` resolution
 //! rules every command applies.
 
+use anyhow::{Result, anyhow};
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
-use railyard_manifest::{ManifestError, RailyardManifest};
-use std::error::Error;
+use railyard_manifest::RailyardManifest;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
 
@@ -29,7 +29,7 @@ pub(crate) struct LinkedProject {
 /// The project this directory belongs to, if any: the nearest manifest here
 /// or in an ancestor, carrying a `project.id` (both written by
 /// `railyard init`).
-pub(crate) fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> {
+pub(crate) fn linked_project() -> Result<Option<LinkedProject>> {
     let cwd = env::current_dir()?;
     let Some((path, raw)) = find_manifest(&cwd)? else {
         return Ok(None);
@@ -48,7 +48,7 @@ pub(crate) fn linked_project() -> Result<Option<LinkedProject>, Box<dyn Error>> 
 
 /// The manifest in `dir` itself, if any. Two spellings side by side would
 /// make which one wins a guess, so that is an error, not a pick.
-pub(crate) fn manifest_in(dir: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
+pub(crate) fn manifest_in(dir: &Path) -> Result<Option<(PathBuf, String)>> {
     let mut found: Vec<(PathBuf, String)> = Vec::new();
     for name in MANIFEST_FILES {
         match fs::read_to_string(dir.join(name)) {
@@ -62,19 +62,18 @@ pub(crate) fn manifest_in(dir: &Path) -> Result<Option<(PathBuf, String)>, Box<d
             .iter()
             .filter_map(|(path, _)| path.file_name().and_then(|name| name.to_str()))
             .collect();
-        return Err(format!(
+        return Err(anyhow!(
             "multiple manifests in {}: {}; keep one and delete the rest",
             dir.display(),
             names.join(", ")
-        )
-        .into());
+        ));
     }
     Ok(found.pop())
 }
 
 /// The nearest manifest at or above `start`. The walk stops at the first
 /// file found — a manifest without a `project.id` still ends the search.
-pub(crate) fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>, Box<dyn Error>> {
+pub(crate) fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>> {
     let mut dir = start.to_path_buf();
     loop {
         if let Some(found) = manifest_in(&dir)? {
@@ -88,7 +87,7 @@ pub(crate) fn find_manifest(start: &Path) -> Result<Option<(PathBuf, String)>, B
 
 /// `.railyard.json` stays strict JSON; the `c`/`5` spellings get the
 /// relaxed grammar.
-pub(crate) fn parse_manifest(path: &Path, raw: &str) -> Result<RailyardManifest, ManifestError> {
+pub(crate) fn parse_manifest(path: &Path, raw: &str) -> Result<RailyardManifest> {
     if path.extension().is_some_and(|ext| ext == "json") {
         railyard_manifest::parse(raw)
     } else {
@@ -100,9 +99,7 @@ pub(crate) fn parse_manifest(path: &Path, raw: &str) -> Result<RailyardManifest,
 /// confirm before acting on it, so a stray subdirectory never silently
 /// targets the parent's project. Report-only callers (`whoami`) use
 /// `linked_project` directly.
-pub(crate) fn confirmed_linked_project(
-    ctx: ExecContext,
-) -> Result<Option<LinkedProject>, Box<dyn Error>> {
+pub(crate) fn confirmed_linked_project(ctx: ExecContext) -> Result<Option<LinkedProject>> {
     let Some(project) = linked_project()? else {
         return Ok(None);
     };
@@ -111,22 +108,18 @@ pub(crate) fn confirmed_linked_project(
 
 /// The ancestor gate itself: true when the manifest is local or the user
 /// confirmed acting on the ancestor's project; errors when not interactive.
-pub(crate) fn confirm_ancestor(
-    project: &LinkedProject,
-    ctx: ExecContext,
-) -> Result<bool, Box<dyn Error>> {
+pub(crate) fn confirm_ancestor(project: &LinkedProject, ctx: ExecContext) -> Result<bool> {
     let Some(path) = &project.manifest_path else {
         return Ok(true);
     };
 
     if !ctx.interactive {
-        return Err(format!(
+        return Err(anyhow!(
             "no manifest in this directory, but {} exists (project {}); rerun from its \
              directory to use it",
             path.display(),
             project.name
-        )
-        .into());
+        ));
     }
     Ok(Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt(format!(
@@ -144,7 +137,7 @@ pub(crate) fn confirm_ancestor(
 pub(crate) async fn resolve_project_server(
     project: &LinkedProject,
     ctx: ExecContext,
-) -> Result<(String, ServerConfig), Box<dyn Error>> {
+) -> Result<(String, ServerConfig)> {
     match project_binding(&project.id)? {
         ProjectBinding::Bound(name, server) => Ok((name, server)),
         ProjectBinding::Stale(stale) => {
@@ -169,14 +162,20 @@ pub(crate) enum ProjectBinding {
 
 /// The binding recorded by `init` or a project-scoped `login`, checked
 /// against the server entries that still exist.
-pub(crate) fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dyn Error>> {
+pub(crate) fn project_binding(project_id: &str) -> Result<ProjectBinding> {
     let Some(name) = read_project_binding(project_id)? else {
         return Ok(ProjectBinding::Unbound);
     };
     match read_server(&name) {
         Ok(server) => Ok(ProjectBinding::Bound(name, server)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ProjectBinding::Stale(name)),
-        Err(error) => Err(format!("could not read server {name}: {error}").into()),
+        Err(error)
+            if error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::NotFound) =>
+        {
+            Ok(ProjectBinding::Stale(name))
+        }
+        Err(error) => Err(anyhow!("could not read server {name}: {error}")),
     }
 }
 
@@ -187,7 +186,7 @@ pub(crate) fn project_binding(project_id: &str) -> Result<ProjectBinding, Box<dy
 async fn offer_project_link(
     project: &LinkedProject,
     ctx: ExecContext,
-) -> Result<(String, ServerConfig), Box<dyn Error>> {
+) -> Result<(String, ServerConfig)> {
     let mut candidates: Vec<(String, ServerConfig)> = Vec::new();
     let mut unchecked: Vec<String> = Vec::new();
     for (name, server) in list_servers()? {
@@ -201,30 +200,29 @@ async fn offer_project_link(
     match candidates.len() {
         // Recommending `init` while a server couldn't answer would risk
         // recreating a project that lives on the unreachable box.
-        0 if !unchecked.is_empty() => Err(format!(
+        0 if !unchecked.is_empty() => Err(anyhow!(
             "this project is not linked to a server on this machine, and no reachable server \
              has project {} ({}); could not check {} — restore access there before running \
              `railyard init`, which would create the project anew",
             project.name,
             project.id,
             unchecked.join(", ")
-        )
-        .into()),
-        0 => Err(format!(
+        )),
+        0 => Err(anyhow!(
             "this project is not linked to a server on this machine, and none of your servers \
              have project {} ({}); run `railyard init` to create it",
-            project.name, project.id
-        )
-        .into()),
+            project.name,
+            project.id
+        )),
         1 => {
             let (name, server) = candidates.remove(0);
             if !ctx.interactive {
-                return Err(format!(
+                return Err(anyhow!(
                     "found project {} ({}) on server {name}, but this directory is not linked \
                      to it; rerun interactively to link",
-                    project.name, project.id
-                )
-                .into());
+                    project.name,
+                    project.id
+                ));
             }
             let confirmed = Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt(format!(
@@ -234,21 +232,22 @@ async fn offer_project_link(
                 .default(true)
                 .interact()?;
             if !confirmed {
-                return Err("this project is not linked to a server on this machine".into());
+                return Err(anyhow!(
+                    "this project is not linked to a server on this machine"
+                ));
             }
             link_project(project, name, server)
         }
         _ => {
             let names: Vec<String> = candidates.iter().map(|(name, _)| name.clone()).collect();
             if !ctx.interactive {
-                return Err(format!(
+                return Err(anyhow!(
                     "project {} ({}) exists on several servers ({}); rerun interactively to \
                      choose one to link",
                     project.name,
                     project.id,
                     names.join(", ")
-                )
-                .into());
+                ));
             }
             let items: Vec<String> = candidates
                 .iter()
@@ -272,7 +271,7 @@ pub(crate) fn link_project(
     project: &LinkedProject,
     name: String,
     server: ServerConfig,
-) -> Result<(String, ServerConfig), Box<dyn Error>> {
+) -> Result<(String, ServerConfig)> {
     record_project_binding(&project.id, &name)?;
     println!("Linked project {} ({}) to {name}", project.name, project.id);
     Ok((name, server))
@@ -313,26 +312,25 @@ pub(crate) async fn server_project_presence(
 
 /// `--server` flag, then the sole known server. Never prompts — commands
 /// other than `init` must be told which server when several exist.
-pub(crate) fn resolve_server(
-    explicit: Option<String>,
-) -> Result<(String, ServerConfig), Box<dyn Error>> {
+pub(crate) fn resolve_server(explicit: Option<String>) -> Result<(String, ServerConfig)> {
     if let Some(name) = explicit {
         let server =
-            read_server(&name).map_err(|error| format!("could not read server {name}: {error}"))?;
+            read_server(&name).map_err(|error| anyhow!("could not read server {name}: {error}"))?;
         return Ok((name, server));
     }
 
     let mut servers = list_servers()?;
     match servers.len() {
-        0 => Err("no servers found; run `railyard login <blob>` first".into()),
+        0 => Err(anyhow!(
+            "no servers found; run `railyard login <blob>` first"
+        )),
         1 => Ok(servers.remove(0)),
         _ => {
             let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
-            Err(format!(
+            Err(anyhow!(
                 "multiple servers exist ({}); pass --server <name>",
                 names.join(", ")
-            )
-            .into())
+            ))
         }
     }
 }

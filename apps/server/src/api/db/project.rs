@@ -1,5 +1,5 @@
+use anyhow::Result;
 use libsql::params;
-use std::io;
 
 use super::{Db, db_error, integer_column, text_column};
 
@@ -15,20 +15,14 @@ impl Db {
         name: &str,
         id: Option<&str>,
         now: u64,
-    ) -> io::Result<Project> {
+    ) -> Result<Option<Project>> {
         if self.project_id_by_name(name).await?.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("project {name} already exists"),
-            ));
+            return Ok(None);
         }
         if let Some(id) = id
             && self.project_by_id(id).await?.is_some()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("project id {id} already exists"),
-            ));
+            return Ok(None);
         }
 
         let project_id = match id {
@@ -43,14 +37,14 @@ impl Db {
             .await
             .map_err(db_error)?;
 
-        Ok(Project {
+        Ok(Some(Project {
             id: project_id,
             name: name.to_string(),
             created_at: now,
-        })
+        }))
     }
 
-    pub(crate) async fn list_projects(&self) -> io::Result<Vec<Project>> {
+    pub(crate) async fn list_projects(&self) -> Result<Vec<Project>> {
         let mut rows = self
             .conn
             .query(
@@ -72,7 +66,7 @@ impl Db {
         Ok(projects)
     }
 
-    pub(crate) async fn project_by_id(&self, id: &str) -> io::Result<Option<Project>> {
+    pub(crate) async fn project_by_id(&self, id: &str) -> Result<Option<Project>> {
         let mut rows = self
             .conn
             .query(
@@ -92,7 +86,7 @@ impl Db {
         }
     }
 
-    async fn project_id_by_name(&self, name: &str) -> io::Result<Option<String>> {
+    async fn project_id_by_name(&self, name: &str) -> Result<Option<String>> {
         let mut rows = self
             .conn
             .query("SELECT id FROM projects WHERE name = ?1", params![name])

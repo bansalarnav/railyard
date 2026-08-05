@@ -1,6 +1,6 @@
+use anyhow::{Result, anyhow};
 use libsql::params;
 use sha2::{Digest, Sha256};
-use std::io;
 
 use super::{Db, db_error, text_column};
 
@@ -11,7 +11,7 @@ impl Db {
         token_hash: &str,
         now: u64,
         expires_at: u64,
-    ) -> io::Result<()> {
+    ) -> Result<()> {
         self.conn
             .execute(
                 "INSERT INTO invites (token_hash, user_id, expires_at, created_at)
@@ -28,7 +28,7 @@ impl Db {
         token_hash: &str,
         public_key: &str,
         now: u64,
-    ) -> io::Result<Option<String>> {
+    ) -> Result<Option<String>> {
         let consumed = self
             .conn
             .execute(
@@ -55,7 +55,7 @@ impl Db {
             .next()
             .await
             .map_err(db_error)?
-            .ok_or_else(|| io::Error::other("redeemed invite row disappeared"))?;
+            .ok_or_else(|| anyhow!("redeemed invite row disappeared"))?;
         let user_id = text_column(&row, 0)?;
 
         self.conn
